@@ -1,0 +1,12 @@
+# dependencies
+node_modules/
+
+# secrets & runtime state（絶対にコミットしない）
+.env
+data/
+workspace/
+inbox/
+
+# logs / OS
+*.log
+.DS_Store
