@@ -15,7 +15,7 @@ const client = new Client({
 
 client.once(Events.ClientReady, (c) => {
   console.log(`🤵 Jarvis 起動: ${c.user.tag} (${c.user.id})`);
-  console.log(`   専用サーバー: ${config.guildId ?? "(全サーバー)"} / チャンネル: ${config.channelId ?? "(全チャンネル)"}`);
+  console.log("   参加中のサーバーで @メンションすると応答します。");
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -29,19 +29,15 @@ client.on(Events.MessageCreate, async (message) => {
 /**
  * 会話のルーティング。
  *
- * - 通常チャンネルで @メンション → そのメッセージから新しいスレッドを作り、新規セッションで応答。
+ * - チャンネルで @メンション → そのメッセージから新しいスレッドを作り、新規セッションで応答。
  * - 秘書が管理するスレッド内 → メンション不要で会話を継続（既存セッションを --resume）。
- * - それ以外（無関係なスレッド／メンション無し） → 無視。
+ * - メンションも既存スレッドも無し → 無視。
  *
  * こうして「Discord スレッド ↔ Claude セッション」が 1 対 1 で対応し、履歴が引き継がれる。
  */
 async function handleMessage(message: Message): Promise<void> {
   if (message.author.bot) return; // 自分や他Botは無視
-  if (!message.inGuild()) return; // 専用サーバー(Guild)内のみ
-  if (config.guildId && message.guildId !== config.guildId) return;
-
-  // 許可リスト: 秘書はオーナーの権限で動くため、許可ユーザー以外の指示には応じない
-  if (config.allowedUserIds.length > 0 && !config.allowedUserIds.includes(message.author.id)) return;
+  if (!message.inGuild()) return; // Guild 内のみ（DM は扱わない）
 
   const botId = client.user?.id;
   const channel = message.channel;
@@ -49,14 +45,8 @@ async function handleMessage(message: Message): Promise<void> {
   const mentioned = botId ? message.mentions.users.has(botId) : false;
   const known = inThread ? getSession(channel.id) : undefined;
 
-  // 既存スレッドの継続、または @メンションのみ反応する
+  // 既存スレッドの継続、または @メンションに反応する
   if (!known && !mentioned) return;
-
-  // チャンネル制限（設定時）。スレッドは親チャンネルで判定。
-  if (config.channelId) {
-    const parentId = inThread ? channel.parentId : channel.id;
-    if (parentId !== config.channelId) return;
-  }
 
   const userText = stripMention(message.content, botId);
   if (!userText) {

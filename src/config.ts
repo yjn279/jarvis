@@ -22,19 +22,6 @@ const dataDir = process.env.JARVIS_DATA_DIR
 export const config = {
   /** Discord Bot トークン。 */
   token: required("DISCORD_BOT_TOKEN"),
-  /** 反応する専用サーバー。未設定なら全サーバー。 */
-  guildId: process.env.JARVIS_GUILD_ID || undefined,
-  /** 反応するチャンネル。未設定ならサーバー内全チャンネル。 */
-  channelId: process.env.JARVIS_CHANNEL_ID || undefined,
-  /**
-   * 秘書を操作できるユーザーの Discord ID（許可リスト）。
-   * 秘書はオーナーの Claude 権限で動くため、ここに無いユーザーの指示は無視する。
-   * 空配列なら専用サーバー内の全員を許可（後方互換）。
-   */
-  allowedUserIds: (process.env.JARVIS_ALLOWED_USER_IDS || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean),
   /** claude のパーミッションモード。 */
   permissionMode: process.env.CLAUDE_PERMISSION_MODE || "default",
   /** claude が動く作業ディレクトリ。 */

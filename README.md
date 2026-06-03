@@ -56,15 +56,15 @@ cp .env.example .env
 npm install
 ```
 
-### Dedicated server
+### Invite
 
-Discord は Bot 単独でのサーバー作成を許可していないため、専用サーバーは自分のアカウントで用意する。Discord で新しいサーバーを1つ作り、次のコマンドが案内する招待 URL から Bot を追加する。
+Discord は Bot 単独でのサーバー作成を許可していないため、Bot を入れるサーバーは自分のアカウントで用意する。自分が管理する Discord サーバーを使うか新規に作り、次のコマンドが案内する招待 URL から Bot を追加する。
 
 ```sh
 npm run setup
 ```
 
-`npm run setup` は Bot の参加状況を確認する。未参加なら招待 URL を表示するので、それを開いて専用サーバーに Bot を追加する。追加後にもう一度実行すると、参加先のサーバーと最初のテキストチャンネルを検出し、 `JARVIS_GUILD_ID` と `JARVIS_CHANNEL_ID` を `.env` に自動で書き込む。
+`npm run setup` はトークンを検証し、Bot の参加サーバー一覧と招待 URL を表示する。秘書は参加中のどのサーバーでも `@メンション` に応答するため、サーバーやチャンネルを固定する設定は不要である。
 
 ### Launch
 
@@ -76,7 +76,7 @@ npm run setup
 
 ## Usage
 
-専用サーバーの `#jarvis` チャンネルで Bot にメンションすると会話が始まる。使い方の要点は次のとおりである。
+Bot を追加したサーバーのチャンネルでメンションすると会話が始まる。使い方の要点は次のとおりである。
 
 - チャンネルで `@Jarvis` とメンションすると、その発言からスレッドが作られ、秘書がスレッド内で応答する。
 - スレッド内では、メンションなしで発言を続けるだけで会話が継続する。
@@ -91,9 +91,6 @@ npm run setup
 | 変数 | 必須 | 既定 | 説明 |
 | :-- | :-: | :-- | :-- |
 | `DISCORD_BOT_TOKEN` | 必須 | なし | Discord Bot のトークン。 |
-| `JARVIS_GUILD_ID` | 任意 | 全サーバー | 反応する専用サーバー。 `npm run setup` が自動記入する。 |
-| `JARVIS_CHANNEL_ID` | 任意 | 全チャンネル | 反応するチャンネル。 `npm run setup` が自動記入する。 |
-| `JARVIS_ALLOWED_USER_IDS` | 推奨 | 全員 | 秘書を操作できるユーザーID（カンマ区切り）。自分の ID のみ推奨。 |
 | `CLAUDE_PERMISSION_MODE` | 任意 | `default` | claude の権限。道具を使わせるなら `bypassPermissions` 。 |
 | `JARVIS_WORKDIR` | 任意 | `./workspace` | claude が動く作業ディレクトリ。 |
 | `CLAUDE_MODEL` | 任意 | 既定モデル | 使う Claude モデル。 |
@@ -105,9 +102,9 @@ npm run setup
 
 ## Security
 
-秘書はオーナーの Claude 権限で `claude` を実行するため、誰が操作できるかが最大のセキュリティ境界になる。次の方針で守る。
+秘書はオーナーの Claude 権限・サブスクで `claude` を実行する。Bot を追加したサーバーのメンバーは誰でもメンションで秘書を動かせるため、次の点に注意する。
 
-- 操作できる相手を `JARVIS_ALLOWED_USER_IDS` で自分の ID のみに限定する。許可リスト外のメンションは無視される。
-- 専用サーバーは非公開に保ち、Developer Portal の Public Bot を OFF にして第三者が Bot を追加できないようにする。
+- Bot は自分が管理・信頼するサーバーにのみ追加する。秘書はそのサーバーの全メンバーのメンションに応答する。
 - Bot に与える権限は最小限（チャンネル閲覧・送信・スレッド・履歴・リアクション）に留め、管理者権限は付与しない。
+- 会話だけなら `CLAUDE_PERMISSION_MODE` は `default` のままにし、道具を使わせる場合のみ慎重に権限を上げる。
 - トークンは `.env` にのみ置き、リポジトリへコミットしない（ `.env` は `.gitignore` 済み）。

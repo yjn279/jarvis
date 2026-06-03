@@ -18,11 +18,11 @@ Jarvis は Discord 上で動く個人用AI秘書である。 [GOROman/nullevi03]
 | `src/claude.ts` | `claude` をヘッドレス実行し、応答と `session_id` を返す。 |
 | `src/sessions.ts` | `threadId` ↔ `sessionId` の対応表を JSON で永続化する。 |
 | `src/discord.ts` | メンション除去・分割送信・入力中表示・履歴整形の補助。 |
-| `src/setup-server.ts` | Bot の参加サーバーを検出して `.env` に記録し、招待 URL を案内する。 |
+| `src/setup-server.ts` | Bot の参加サーバーを一覧表示し、追加用の招待 URL を案内する。 |
 | `src/persona.ts` | 秘書の人格。システムプロンプトへ追記される。 |
 | `src/config.ts` | 環境変数を一箇所で解決し型付きで配る。 |
 
-ルーティングの原則は、通常チャンネルではメンションでスレッドを作って新規セッションを開始し、秘書が作ったスレッド内ではメンション不要でセッションを継続する、というものである。
+ルーティングの原則は、チャンネルでメンションされたらスレッドを作って新規セッションを開始し、秘書が作ったスレッド内ではメンション不要でセッションを継続する、というものである。参加中のどのサーバー・チャンネルでも同様に動き、サーバーやチャンネルを絞る制限は持たない。
 
 ## Commands
 
@@ -30,7 +30,7 @@ Jarvis は Discord 上で動く個人用AI秘書である。 [GOROman/nullevi03]
 
 - `npm run typecheck` で型検査する。
 - `npm start` で Bot を起動する（ `.env` の `DISCORD_BOT_TOKEN` が必要）。
-- `npm run setup` で専用サーバーを作成する。
+- `npm run setup` で参加サーバーの確認と招待 URL の表示を行う。
 - `./boot.sh` で常駐起動する（クラッシュ時に自動再起動）。
 
 ## Conventions
