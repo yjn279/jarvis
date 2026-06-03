@@ -93,6 +93,7 @@ npm run setup
 | `DISCORD_BOT_TOKEN` | 必須 | なし | Discord Bot のトークン。 |
 | `JARVIS_GUILD_ID` | 任意 | 全サーバー | 反応する専用サーバー。 `npm run setup` が自動記入する。 |
 | `JARVIS_CHANNEL_ID` | 任意 | 全チャンネル | 反応するチャンネル。 `npm run setup` が自動記入する。 |
+| `JARVIS_ALLOWED_USER_IDS` | 推奨 | 全員 | 秘書を操作できるユーザーID（カンマ区切り）。自分の ID のみ推奨。 |
 | `CLAUDE_PERMISSION_MODE` | 任意 | `default` | claude の権限。道具を使わせるなら `bypassPermissions` 。 |
 | `JARVIS_WORKDIR` | 任意 | `./workspace` | claude が動く作業ディレクトリ。 |
 | `CLAUDE_MODEL` | 任意 | 既定モデル | 使う Claude モデル。 |
@@ -101,3 +102,12 @@ npm run setup
 ## Notes
 
 秘書の人格や口調は `src/persona.ts` を書き換えると変わる。会話だけなら `CLAUDE_PERMISSION_MODE` は `default` のままでよいが、ファイル操作などの道具を使わせる場合は権限を上げる必要があり、その分だけ実行できる操作も広がる点に注意する。
+
+## Security
+
+秘書はオーナーの Claude 権限で `claude` を実行するため、誰が操作できるかが最大のセキュリティ境界になる。次の方針で守る。
+
+- 操作できる相手を `JARVIS_ALLOWED_USER_IDS` で自分の ID のみに限定する。許可リスト外のメンションは無視される。
+- 専用サーバーは非公開に保ち、Developer Portal の Public Bot を OFF にして第三者が Bot を追加できないようにする。
+- Bot に与える権限は最小限（チャンネル閲覧・送信・スレッド・履歴・リアクション）に留め、管理者権限は付与しない。
+- トークンは `.env` にのみ置き、リポジトリへコミットしない（ `.env` は `.gitignore` 済み）。

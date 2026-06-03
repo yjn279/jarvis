@@ -40,6 +40,9 @@ async function handleMessage(message: Message): Promise<void> {
   if (!message.inGuild()) return; // 専用サーバー(Guild)内のみ
   if (config.guildId && message.guildId !== config.guildId) return;
 
+  // 許可リスト: 秘書はオーナーの権限で動くため、許可ユーザー以外の指示には応じない
+  if (config.allowedUserIds.length > 0 && !config.allowedUserIds.includes(message.author.id)) return;
+
   const botId = client.user?.id;
   const channel = message.channel;
   const inThread = channel.isThread();
