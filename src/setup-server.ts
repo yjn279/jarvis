@@ -4,19 +4,25 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 
 /**
- * 専用 Discord サーバーを Bot 権限で自動作成する。
+ * 秘書を専用サーバーに接続する準備をする。
  *
- *   1. ギルド（サーバー）を作成（Bot がオーナーになる）
- *   2. テキストチャンネル #jarvis を用意
- *   3. あなたが参加するための招待リンクを発行
- *   4. .env に JARVIS_GUILD_ID / JARVIS_CHANNEL_ID を書き込む
+ * Discord は Bot 単独でのサーバー作成（POST /guilds）を禁止しているため、
+ * サーバー作成と Bot 追加はユーザーのアカウントで行う。本スクリプトは:
  *
- * Discord 制約: Bot 単独でのギルド作成は「参加ギルドが10未満」のときのみ可能。
+ *   1. トークンを検証し、Bot がどのサーバーに参加しているかを調べる
+ *   2. 参加済みなら、その専用サーバーとテキストチャンネルを .env に記録する
+ *   3. 未参加なら、Bot をサーバーへ追加する OAuth 招待 URL を案内する
+ *
+ * 一度サーバーへ追加すれば、以降はこのコマンドが自動で ID を解決する。
  */
 
 const API = "https://discord.com/api/v10";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = join(root, ".env");
+
+// View Channels | Send Messages | Create Public Threads | Send Messages in Threads
+// | Read Message History | Add Reactions
+const INVITE_PERMISSIONS = "309237713984";
 
 const token = process.env.DISCORD_BOT_TOKEN;
 if (!token) {
@@ -24,23 +30,16 @@ if (!token) {
   process.exit(1);
 }
 
-const guildName = process.argv[2] || process.env.JARVIS_GUILD_NAME || "Jarvis 秘書室";
-const channelName = "jarvis";
-
-async function dapi<T>(path: string, method: string, body?: unknown): Promise<T> {
+async function dapi<T>(path: string, method = "GET"): Promise<T> {
   const res = await fetch(API + path, {
     method,
     headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`${method} ${path} → ${res.status}\n${text}`);
-  }
+  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}\n${text}`);
   return (text ? JSON.parse(text) : {}) as T;
 }
 
-/** .env の1行を上書き／追記する。 */
 function setEnvVar(key: string, value: string): void {
   let content = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
   const line = `${key}=${value}`;
@@ -49,45 +48,52 @@ function setEnvVar(key: string, value: string): void {
   writeFileSync(envPath, content);
 }
 
+interface Guild { id: string; name: string; }
+interface Channel { id: string; type: number; name: string; position: number; }
+
 async function main(): Promise<void> {
-  const me = await dapi<{ username: string; id: string }>("/users/@me", "GET");
+  const me = await dapi<{ username: string; id: string }>("/users/@me");
   console.log(`Bot: ${me.username} (${me.id})`);
 
-  console.log(`サーバー「${guildName}」を作成中…`);
-  const guild = await dapi<{ id: string; name: string }>("/guilds", "POST", {
-    name: guildName,
-    channels: [{ name: channelName, type: 0 }], // 0 = GUILD_TEXT
-  });
+  const inviteUrl =
+    `https://discord.com/oauth2/authorize?client_id=${me.id}` +
+    `&permissions=${INVITE_PERMISSIONS}&scope=bot`;
 
-  const channels = await dapi<Array<{ id: string; type: number; name: string }>>(
-    `/guilds/${guild.id}/channels`,
-    "GET",
-  );
-  const textChannel = channels.find((c) => c.type === 0);
-  if (!textChannel) throw new Error("テキストチャンネルの作成に失敗しました。");
+  const guilds = await dapi<Guild[]>("/users/@me/guilds");
 
-  const invite = await dapi<{ code: string }>(`/channels/${textChannel.id}/invites`, "POST", {
-    max_age: 0, // 無期限
-    max_uses: 0, // 無制限
-    unique: true,
-  });
+  if (guilds.length === 0) {
+    console.log("\nまだどのサーバーにも参加していません。");
+    console.log("次の URL を開き、専用サーバーを選んで Bot を追加してください:\n");
+    console.log(`  ${inviteUrl}\n`);
+    console.log("追加後にもう一度 `npm run setup` を実行すると、サーバーを自動検出します。");
+    return;
+  }
+
+  // 専用サーバーを選ぶ: JARVIS_GUILD_ID 指定があればそれ、無ければ最初の1つ。
+  const preferred = process.env.JARVIS_GUILD_ID;
+  const guild = guilds.find((g) => g.id === preferred) ?? guilds[0]!;
+
+  const channels = await dapi<Channel[]>(`/guilds/${guild.id}/channels`);
+  const textChannels = channels.filter((c) => c.type === 0).sort((a, b) => a.position - b.position);
+  const channel = textChannels[0];
+  if (!channel) throw new Error(`サーバー「${guild.name}」に閲覧可能なテキストチャンネルがありません。`);
 
   setEnvVar("JARVIS_GUILD_ID", guild.id);
-  setEnvVar("JARVIS_CHANNEL_ID", textChannel.id);
+  setEnvVar("JARVIS_CHANNEL_ID", channel.id);
 
-  console.log("\n✓ 専用サーバーを作成しました");
+  console.log("\n✓ 専用サーバーを検出し、.env に記録しました");
   console.log("──────────────────────────────────────────");
   console.log(`  サーバー   : ${guild.name} (${guild.id})`);
-  console.log(`  チャンネル : #${textChannel.name} (${textChannel.id})`);
-  console.log(`  .env に JARVIS_GUILD_ID / JARVIS_CHANNEL_ID を書き込みました`);
+  console.log(`  チャンネル : #${channel.name} (${channel.id})`);
+  if (guilds.length > 1) {
+    console.log(`  ※ 参加サーバーが複数あります。別のサーバーを使うなら .env の JARVIS_GUILD_ID を書き換えて再実行してください。`);
+  }
   console.log("──────────────────────────────────────────");
-  console.log(`\n  👉 あなたの参加用 招待リンク:\n     https://discord.gg/${invite.code}\n`);
-  console.log("  この後: 招待リンクから参加 → `./boot.sh` で起動 → #jarvis で @Jarvis にメンション\n");
+  console.log(`\n  Bot 追加用 招待 URL（別サーバーにも入れたいとき）:\n  ${inviteUrl}\n`);
+  console.log("  この後: `./boot.sh` で起動 → #" + channel.name + " で @JARVIS にメンション\n");
 }
 
 main().catch((err) => {
   console.error("\n✗ セットアップ失敗:\n", err.message ?? err);
-  console.error("\nヒント: Bot が既に10サーバー以上に参加していると自動作成できません。");
-  console.error("その場合は手動でサーバーを作り、JARVIS_GUILD_ID / JARVIS_CHANNEL_ID を .env に設定してください。");
   process.exit(1);
 });

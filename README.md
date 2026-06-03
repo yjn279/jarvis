@@ -58,13 +58,13 @@ npm install
 
 ### Dedicated server
 
-専用サーバーは付属スクリプトが自動作成する。サーバー・チャンネル・参加用の招待リンクをまとめて発行し、 `JARVIS_GUILD_ID` と `JARVIS_CHANNEL_ID` を `.env` に書き込む。
+Discord は Bot 単独でのサーバー作成を許可していないため、専用サーバーは自分のアカウントで用意する。Discord で新しいサーバーを1つ作り、次のコマンドが案内する招待 URL から Bot を追加する。
 
 ```sh
 npm run setup
 ```
 
-出力された招待リンクを開き、自分のアカウントでサーバーに参加する。
+`npm run setup` は Bot の参加状況を確認する。未参加なら招待 URL を表示するので、それを開いて専用サーバーに Bot を追加する。追加後にもう一度実行すると、参加先のサーバーと最初のテキストチャンネルを検出し、 `JARVIS_GUILD_ID` と `JARVIS_CHANNEL_ID` を `.env` に自動で書き込む。
 
 ### Launch
 

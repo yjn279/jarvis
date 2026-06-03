@@ -18,7 +18,7 @@ Jarvis は Discord 上で動く個人用AI秘書である。 [GOROman/nullevi03]
 | `src/claude.ts` | `claude` をヘッドレス実行し、応答と `session_id` を返す。 |
 | `src/sessions.ts` | `threadId` ↔ `sessionId` の対応表を JSON で永続化する。 |
 | `src/discord.ts` | メンション除去・分割送信・入力中表示・履歴整形の補助。 |
-| `src/setup-server.ts` | 専用サーバー・チャンネル・招待リンクを REST で作成する。 |
+| `src/setup-server.ts` | Bot の参加サーバーを検出して `.env` に記録し、招待 URL を案内する。 |
 | `src/persona.ts` | 秘書の人格。システムプロンプトへ追記される。 |
 | `src/config.ts` | 環境変数を一箇所で解決し型付きで配る。 |
 
