@@ -1,110 +1,70 @@
 # Jarvis
 
-あなた専用のAI秘書。Discord でメンションすると、Claude Code があなたに代わって応答する常駐ボットである。 [GOROman/nullevi03](https://github.com/GOROman/nullevi03) の「Claude Code を messaging に常駐させる」思想を受け継ぎつつ、Telegram を Discord に置き換え、会話の単位をスレッドに対応させた。
+Discord からメンションすると Claude Code が応答する、あなた専用の常駐 AI 秘書である。Anthropic 公式の Discord チャネルプラグイン `discord@claude-plugins-official` を使い、Discord と稼働中の Claude Code セッションを双方向に橋渡しする。スマートフォンからでも、マシン上の実ファイルに対して Claude にタスクを依頼できる。
+
+以前は `claude` CLI を自作の TypeScript でラップする実装だったが、公式チャネルプラグインへ全面的に作り替えた。プラグインが Discord Gateway との接続・アクセス制御・返信を担うため、このリポジトリはセットアップ手順と起動・設定のテンプレートだけを受け持つ。
 
 ## Overview
 
-Jarvis は、 `claude` CLI をヘッドレス実行する薄いラッパーである。秘書としての頭脳は Claude Code 本体が担い、このリポジトリは Discord とのつなぎ込みと、会話の対応付けだけを受け持つ。
-
-本質は「Discord スレッド ↔ Claude セッションの 1 対 1 対応」という一点に集約される。各スレッドは固有の `session_id` を持ち、メッセージが届くたびに `claude --resume` でそのセッションを継続するため、過去の文脈が自然に引き継がれる。追加のデータベースや埋め込み検索を持たず、Claude Code のセッション履歴をそのまま会話の記憶として使う。
-
-認証は Claude Code のサブスクリプションをそのまま利用する。 `claude` CLI がログイン済みであれば、別途 API キーは要らない。
-
-## Architecture
-
-メンションを起点にスレッドを作り、そのスレッドIDをセッションIDへ対応付けて永続化する。次回以降は同じセッションを継続する。
+メッセージはプラグインの MCP サーバーを介して流れる。サーバーが Discord に接続して許可されたメッセージだけを Claude Code セッションへ届け、Claude の返信を Discord へ送り返す。Bot はリスナーのプロセスが生きている間だけオンラインになる。
 
 ```mermaid
-flowchart TD
-  mention[メンション] --> createThread[スレッド作成]
-  createThread --> newSession[新規セッション]
-  threadMsg[スレッド内発言] --> lookup[対応表を参照]
-  lookup --> resume[セッション継続]
-  newSession --> claude[claude 実行]
-  resume --> claude
-  claude --> store[対応表へ保存]
-  store --> reply[スレッドへ返信]
+flowchart LR
+  user[ユーザー] --> discord[Discord]
+  discord --> server[チャネルサーバー]
+  server --> gate{アクセス判定}
+  gate -->|許可| claude[Claudeセッション]
+  gate -->|拒否| drop[破棄]
+  claude --> reply[返信]
+  reply --> discord
 ```
 
-対応表は `data/sessions.json` に保存され、 `threadId` をキーに `sessionId` を引く。このファイルは Git 管理外であり、Bot を再起動しても会話は途切れない。
-
-## Prerequisites
-
-動作には次の3つが必要である。
-
-- Node.js `20` 以上。
-- ログイン済みの `claude` CLI（Claude Code）。 `claude --version` で確認できる。
-- Discord アカウントと、自分で作成する Bot アプリケーション。
+会話の記憶や認証は Claude Code 本体に委ねる。`claude` CLI がログイン済みであれば別途 API キーは要らない。
 
 ## Setup
 
-### Discord application
+初期設定はプラグイン導入・トークン保存・アクセス制御の登録からなる。Developer Portal での Bot 作成や OAuth 招待を含む全手順は [docs/discord-channel.md](docs/discord-channel.md) にまとめてある。要点となる設定コマンドを以下に示す。
 
-[Discord Developer Portal](https://discord.com/developers/applications) で Bot を作成し、トークンを取得する。手順は次のとおりである。
-
-1. New Application でアプリを作成する。
-2. 左メニュー Bot を開き、 Privileged Gateway Intents の Message Content Intent を有効にする。
-3. Reset Token を押してトークンをコピーする。トークンは一度しか表示されない。
-
-### Environment
-
-リポジトリ直下で `.env` を用意し、トークンを設定する。
-
-```sh
-cp .env.example .env
-# .env の DISCORD_BOT_TOKEN に取得したトークンを貼る
-npm install
+```shell
+/plugin install discord@claude-plugins-official
+/reload-plugins
+/discord:configure <YOUR_BOT_TOKEN>
+/discord:access allow <YOUR_DISCORD_USER_ID>
+/discord:access policy allowlist
 ```
 
-### Invite
+## Running
 
-Discord は Bot 単独でのサーバー作成を許可していないため、Bot を入れるサーバーは自分のアカウントで用意する。自分が管理する Discord サーバーを使うか新規に作り、次のコマンドが案内する招待 URL から Bot を追加する。
+同梱の `bin/discord-channel.sh` が PATH を整え、対話モードの `claude --channels` を常駐ループで起動する。`screen` でデタッチ起動すると端末を閉じても動き続ける。
 
-```sh
-npm run setup
+```shell
+screen -dmS discordbot ./bin/discord-channel.sh
+screen -r discordbot   # 画面確認（デタッチは Ctrl-a d）
 ```
 
-`npm run setup` はトークンを検証し、Bot の参加サーバー一覧と招待 URL を表示する。秘書は参加中のどのサーバーでも `@メンション` に応答するため、サーバーやチャンネルを固定する設定は不要である。
+`-p`（print）モードは初回応答後に終了し常駐にならないため、必ず対話モードで起動する。再起動後の自動起動は設定していない。
 
-### Launch
+## Access Control
 
-`boot.sh` は Bot を常駐させ、停止しても自動で再起動する。
+誰がどこから Bot を動かせるかは `~/.claude/channels/discord/access.json` で制御する。雛形は [access.json.example](access.json.example) にある。DM は `dmPolicy` と許可リスト、チャンネルはチャンネル単位の opt-in（`groups`）とメンション要否で判定する。
 
-```sh
-./boot.sh
+設定の要点を以下に示す。
+
+- `dmPolicy: "allowlist"` と `allowFrom` で、DM は本人だけに施錠する。
+- チャンネルで反応させるには、そのチャンネル ID を `groups` に登録する。ワイルドカードは無いため、全チャンネルを対象にするなら各チャンネルを登録し、新規チャンネルは都度追加する。
+- `mentionPatterns` に正規表現を加えると、実際の @メンションに加えて本文一致でも反応する。全チャンネルへ広げる場合は誤発火に注意する。
+
+`access.json` はメッセージ受信のたびに再読込されるため、編集は即時反映され再起動は要らない。
+
+## Repository
+
+リポジトリの構成を以下に示す。実際のトークンと `access.json` は `~/.claude/channels/discord/` にあり、ここには含めない。
+
+```shell
+.
+├── bin/
+│   └── discord-channel.sh   # チャネルリスナーの起動スクリプト
+├── docs/
+│   └── discord-channel.md   # セットアップ全手順
+└── access.json.example      # アクセス制御の雛形
 ```
-
-## Usage
-
-Bot を追加したサーバーのチャンネルでメンションすると会話が始まる。使い方の要点は次のとおりである。
-
-- チャンネルで `@Jarvis` とメンションすると、その発言からスレッドが作られ、秘書がスレッド内で応答する。
-- スレッド内では、メンションなしで発言を続けるだけで会話が継続する。
-- 別の話題は、チャンネルで改めてメンションすると新しいスレッドとして独立する。
-
-スレッドごとに会話が独立し、それぞれの文脈が保たれる。
-
-## Configuration
-
-`.env` で挙動を調整する。各変数の意味を次に示す。
-
-| 変数 | 必須 | 既定 | 説明 |
-| :-- | :-: | :-- | :-- |
-| `DISCORD_BOT_TOKEN` | 必須 | なし | Discord Bot のトークン。 |
-| `CLAUDE_PERMISSION_MODE` | 任意 | `default` | claude の権限。道具を使わせるなら `bypassPermissions` 。 |
-| `JARVIS_WORKDIR` | 任意 | `./workspace` | claude が動く作業ディレクトリ。 |
-| `CLAUDE_MODEL` | 任意 | 既定モデル | 使う Claude モデル。 |
-| `JARVIS_DATA_DIR` | 任意 | `./data` | 対応表の保存先。 |
-
-## Notes
-
-秘書の人格や口調は `src/persona.ts` を書き換えると変わる。会話だけなら `CLAUDE_PERMISSION_MODE` は `default` のままでよいが、ファイル操作などの道具を使わせる場合は権限を上げる必要があり、その分だけ実行できる操作も広がる点に注意する。
-
-## Security
-
-秘書はオーナーの Claude 権限・サブスクで `claude` を実行する。Bot を追加したサーバーのメンバーは誰でもメンションで秘書を動かせるため、次の点に注意する。
-
-- Bot は自分が管理・信頼するサーバーにのみ追加する。秘書はそのサーバーの全メンバーのメンションに応答する。
-- Bot に与える権限は最小限（チャンネル閲覧・送信・スレッド・履歴・リアクション）に留め、管理者権限は付与しない。
-- 会話だけなら `CLAUDE_PERMISSION_MODE` は `default` のままにし、道具を使わせる場合のみ慎重に権限を上げる。
-- トークンは `.env` にのみ置き、リポジトリへコミットしない（ `.env` は `.gitignore` 済み）。

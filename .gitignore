@@ -1,12 +1,14 @@
-# dependencies
-node_modules/
+# OS / logs
+.DS_Store
+*.log
 
-# secrets & runtime state（絶対にコミットしない）
-.env
+# 旧実装の残骸（コミットしない）
+node_modules/
 data/
 workspace/
 inbox/
 
-# logs / OS
-*.log
-.DS_Store
+# ローカルの秘密情報。実際のトークンとアクセス設定は
+# ~/.claude/channels/discord/（.env / access.json）にあり、本リポジトリには置かない。
+.env
+access.json

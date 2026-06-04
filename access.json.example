@@ -1,0 +1,12 @@
+{
+  "dmPolicy": "allowlist",
+  "allowFrom": ["<YOUR_DISCORD_USER_ID>"],
+  "groups": {
+    "<CHANNEL_ID>": {
+      "requireMention": true,
+      "allowFrom": ["<YOUR_DISCORD_USER_ID>"]
+    }
+  },
+  "pending": {},
+  "mentionPatterns": ["<@!?<BOT_APPLICATION_ID>>"]
+}
