@@ -100,14 +100,14 @@ curl -s -A "DiscordBot" -H "Authorization: Bot $TOKEN" \
 
 ## Running
 
-Bot はチャネルリスナーのプロセスが生きている間だけオンラインになる。同梱の `bin/discord-channel.sh` が PATH 整備と常駐ループを行う。`screen` でデタッチ起動すると端末を閉じても動き続ける。
+Bot はチャネルリスナーのプロセスが生きている間だけオンラインになる。本リポジトリは公式 discord プラグインのフォーク（スレッド自動生成つき）であり、自作チャネルは承認許可リストに無いため `--dangerously-load-development-channels server:jarvis` で読み込む（許可リストのみバイパスし、組織ポリシーは有効）。同梱の `bin/discord-channel.sh` がリポジトリ直下へ移動し、依存解決と常駐ループを行う。
 
 ```shell
 screen -dmS discordbot ./bin/discord-channel.sh
 screen -r discordbot   # 画面確認（デタッチは Ctrl-a d）
 ```
 
-再起動後の自動起動は設定していないため、必要に応じて上記コマンドで復帰させる。
+初回はこのディレクトリの信頼確認が出るため、一度フォアグラウンドで起動して承認しておく。同一 Bot トークンは1プロセスのみ接続できるため、公式プラグインを別セッションで起動している場合は停止してから切り替える。`-p`（print）モードは常駐しない。再起動後の自動起動は設定していない。
 
 ## Troubleshooting
 

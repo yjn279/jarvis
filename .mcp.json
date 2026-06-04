@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "jarvis": {
+      "command": "bun",
+      "args": ["run", "--shell=bun", "--silent", "start"]
+    }
+  }
+}

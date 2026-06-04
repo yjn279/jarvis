@@ -1,36 +1,44 @@
 #!/bin/sh
-# discord-channel.sh — Claude Code の Discord チャネルリスナーを起動する。
+# discord-channel.sh — この自作チャネルプラグイン（Jarvis）を常駐起動する。
 #
-# 公式プラグイン discord@claude-plugins-official を使い、Discord と Claude Code
-# セッションを双方向に橋渡しする。Bot はこのプロセスが生きている間だけオンライン。
-# `-p`（print）モードは初回応答後すぐ終了し常駐にならないため、対話モードで起動する。
+# 公式 discord プラグインをフォークし、チャンネルでの@メンション時にスレッドを
+# 自動生成して以降はスレッド内で会話を続ける。Bot はこのプロセスが生きている間
+# だけオンライン。`-p`（print）モードは初回応答後すぐ終了し常駐にならないため、
+# 対話モードで起動する。
 #
-# 永続起動（推奨）: screen -dmS discordbot /path/to/discord-channel.sh
-# 前面起動:         /path/to/discord-channel.sh
+# 永続起動（推奨）: screen -dmS discordbot /path/to/jarvis/bin/discord-channel.sh
+# 前面起動:         ./bin/discord-channel.sh
 # 画面確認:         screen -r discordbot   （デタッチは Ctrl-a d）
 #
 # 前提:
 #   - bun が入っていること（https://bun.sh）。本スクリプトが ~/.bun/bin を PATH に追加する。
-#   - プラグイン導入済み: claude code で /plugin install discord@claude-plugins-official
 #   - トークンが ~/.claude/channels/discord/.env の DISCORD_BOT_TOKEN にあること。
-#   - アクセス制御は ~/.claude/channels/discord/access.json（access.json.example 参照）。
+#   - アクセス制御は ~/.claude/channels/discord/access.json（access.json.example 参照、
+#     既存の /discord:access スキルでそのまま管理できる）。
+#
+# 研究プレビュー中、自作チャネルは承認許可リストに無いため
+# --dangerously-load-development-channels で読み込む（許可リストのみバイパスし、
+# 組織ポリシーは有効のまま）。.mcp.json と server.ts を見つけるためリポジトリ直下で起動する。
 
 export PATH="$HOME/.bun/bin:$PATH"
 
+# リポジトリ直下（このスクリプトの親の親）へ移動する。
+cd "$(dirname "$0")/.." || exit 1
+
 if ! command -v bun >/dev/null 2>&1; then
-  echo "discord-channel: bun が見つかりません。https://bun.sh からインストールしてください。" >&2
+  echo "jarvis: bun が見つかりません。https://bun.sh からインストールしてください。" >&2
   exit 1
 fi
 
 if [ ! -f "$HOME/.claude/channels/discord/.env" ]; then
-  echo "discord-channel: トークン未設定です。Claude Code で /discord:configure <token> を実行してください。" >&2
+  echo "jarvis: トークン未設定です。Claude Code で /discord:configure <token> を実行してください。" >&2
   exit 1
 fi
 
 # クラッシュしても自動復帰する常駐ループ。
 while true; do
-  echo "discord-channel: 起動 $(date)"
-  claude --channels plugin:discord@claude-plugins-official
-  echo "discord-channel: 終了 (exit=$?) → 5秒後に再起動"
+  echo "jarvis: 起動 $(date)"
+  claude --dangerously-load-development-channels server:jarvis
+  echo "jarvis: 終了 (exit=$?) → 5秒後に再起動"
   sleep 5
 done
