@@ -44,7 +44,7 @@ Pairing captures the ID automatically. To add someone manually, enable **User Se
 
 ## Guild channels
 
-Guild channels are off by default. Opt each one in individually, keyed on the **channel** snowflake (not the guild). Threads inherit their parent channel's opt-in; no separate entry needed. Find channel IDs the same way as user IDs: Developer Mode, right-click the channel, Copy Channel ID.
+Guild channels are off by default. Opt each one in individually, keyed on the **channel** snowflake (not the guild). Threads inherit their parent channel's opt-in (policy lookup and sender allowlist); no separate entry needed. Once the bot is @mentioned in such a channel it opens a thread and keeps replying there without further mentions — but only in threads it was mentioned in; unrelated threads in the same channel stay silent. Find channel IDs the same way as user IDs: Developer Mode, right-click the channel, Copy Channel ID.
 
 ```
 /discord:access group add 846209781206941736

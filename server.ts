@@ -233,6 +233,32 @@ function noteSent(id: string): void {
   }
 }
 
+// jarvis: threads the bot is actively engaged in — opened from a mention, or
+// where someone @mentioned it inside an existing thread. This one Set settles
+// both halves of the thread feature: handleInbound writes to it when a mention
+// spawns/enters a thread (requirement 2), and gate() reads it to keep answering
+// follow-ups there without a fresh mention (requirement 3). Unrelated threads in
+// the same channel are absent from the Set, so the bot stays out of human-only
+// side conversations — the precision the parent-channel-opt-in approach lacked.
+//
+// Volatile on purpose: a restart empties it, so an old thread goes quiet until
+// the next @mention re-engages it. That costs one mention and buys us no state
+// file — the simplest thing that holds the invariant (Simplicity over a startup
+// scan of every thread's history).
+const engagedThreads = new Set<string>()
+const ENGAGED_THREADS_CAP = 1000
+
+function engageThread(id: string): void {
+  // Re-insert at the tail so a still-active thread survives FIFO eviction;
+  // evicting a truly stale one just costs a re-mention, same as a restart.
+  engagedThreads.delete(id)
+  engagedThreads.add(id)
+  if (engagedThreads.size > ENGAGED_THREADS_CAP) {
+    const oldest = engagedThreads.values().next().value
+    if (oldest) engagedThreads.delete(oldest)
+  }
+}
+
 async function gate(msg: Message): Promise<GateResult> {
   const access = loadAccess()
   const pruned = pruneExpired(access)
@@ -274,9 +300,9 @@ async function gate(msg: Message): Promise<GateResult> {
   }
 
   // We key on channel ID (not guild ID) — simpler, and lets the user
-  // opt in per-channel rather than per-server. Threads inherit their
-  // parent channel's opt-in; the reply still goes to msg.channelId
-  // (the thread), this is only the gate lookup.
+  // opt in per-channel rather than per-server. A thread inherits its parent
+  // channel's opt-in (policy lookup) and sender gate; the reply still goes to
+  // msg.channelId (the thread), this is only the gate lookup.
   const isThread = msg.channel.isThread()
   const channelId = isThread
     ? msg.channel.parentId ?? msg.channelId
@@ -285,13 +311,23 @@ async function gate(msg: Message): Promise<GateResult> {
   if (!policy) return { action: 'drop' }
   const groupAllowFrom = policy.allowFrom ?? []
   const requireMention = policy.requireMention ?? true
+  // jarvis invariant: the sender gate is absolute. It holds even inside an
+  // engaged thread, so a thread can never become an injection path for a
+  // member outside groups[parent].allowFrom.
   if (groupAllowFrom.length > 0 && !groupAllowFrom.includes(senderId)) {
     return { action: 'drop' }
   }
-  // jarvis: inside a thread the bot opened, the conversation is already
-  // engaged — continue without requiring a mention. A fresh mention in the
-  // parent channel still spawns the thread (see handleInbound).
-  if (!isThread && requireMention && !(await isMentioned(msg, access.mentionPatterns))) {
+  // jarvis: the mention requirement, relaxed only for threads we're engaged in.
+  //   • requireMention false        → answer everything (still sender-gated).
+  //   • engaged thread               → keep answering, no fresh mention (req. 3).
+  //   • otherwise                    → require an @mention/reply (req. 1).
+  // engagedThreads is checked before isMentioned so an engaged thread skips the
+  // fetchReference() round-trip entirely.
+  if (
+    requireMention &&
+    !(isThread && engagedThreads.has(msg.channelId)) &&
+    !(await isMentioned(msg, access.mentionPatterns))
+  ) {
     return { action: 'drop' }
   }
   return { action: 'deliver', access }
@@ -879,23 +915,30 @@ async function handleInbound(msg: Message): Promise<void> {
     atts.push(`${safeAttName(att)} (${att.contentType ?? 'unknown'}, ${kb}KB)`)
   }
 
-  // jarvis: a fresh mention in a guild text/announcement channel starts a
-  // thread, and the conversation continues there without further mentions
-  // (the thread is delivered by gate() without the mention check). The reply
-  // tool routes to chat_id, so pointing it at the new thread puts Claude's
-  // response inside the thread. thread.id === the starter message id, so
-  // message_id stays valid for download_attachment.
-  if (
-    !msg.channel.isThread() &&
-    (msg.channel.type === ChannelType.GuildText ||
-      msg.channel.type === ChannelType.GuildAnnouncement)
+  // jarvis: keep the conversation in a thread and remember that thread, so
+  // gate() lets follow-ups through without a fresh mention (requirement 3).
+  // engagedThreads is the single piece of state behind both "open on mention"
+  // and "stay engaged".
+  if (msg.channel.isThread()) {
+    // Reaching here means this thread message was mentioned or already engaged;
+    // marking it (idempotent) covers the first @mention inside an existing
+    // thread the bot didn't open.
+    engageThread(msg.channelId)
+  } else if (
+    msg.channel.type === ChannelType.GuildText ||
+    msg.channel.type === ChannelType.GuildAnnouncement
   ) {
+    // A fresh mention in a text/announcement channel spawns a thread; the reply
+    // tool routes to chat_id, so pointing it at the new thread puts Claude's
+    // response inside it. thread.id === the starter message id, so message_id
+    // stays valid for download_attachment.
     try {
       const thread = await msg.startThread({
         name: threadName(msg.content),
         autoArchiveDuration: 1440,
       })
       chat_id = thread.id
+      engageThread(thread.id)
     } catch (err) {
       process.stderr.write(`jarvis: startThread failed: ${err}\n`)
     }
