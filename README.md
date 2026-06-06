@@ -23,7 +23,7 @@ flowchart LR
 | `DISCORD_BOT_TOKEN` | yes | — | Discord Developer Portal で取得した Bot トークン |
 | `DISCORD_ALLOW_USER_IDS` | no | `283813172639563779` | 応答を許可する Discord ユーザー ID（カンマ区切り）。空にすると全員許可（非推奨） |
 | `CHANNEL_CWD_MAP` | no | `{}` | チャンネル ID → 作業ディレクトリの JSON マップ（例: `{"1234":"~/projects/foo"}`）。未登録チャンネルは `DEFAULT_WORKDIR` にフォールバック |
-| `DEFAULT_WORKDIR` | no | `/tmp` | `CHANNEL_CWD_MAP` に載っていないチャンネルの既定 cwd |
+| `DEFAULT_WORKDIR` | no | 実行ユーザーのホームディレクトリ | `CHANNEL_CWD_MAP` に載っていないチャンネルの既定 cwd（未設定時は `os.homedir()` を使用。例: `/tmp` など絶対パスを指定可） |
 | `CLAUDE_PERMISSION_MODE` | no | `default` | `--permission-mode` に渡す値。 `default` / `acceptEdits` / `bypassPermissions` から選ぶ |
 | `REMOTE_CONTROL_ENABLED` | no | `true` | `true` のとき `--remote-control` を付与し、Claude デスクトップアプリでセッションを確認できる |
 | `CLAUDE_MODEL` | no | （claude 既定） | `--model` に渡すモデル識別子。空のとき claude 自身の既定モデルを使う |
