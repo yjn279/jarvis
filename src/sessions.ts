@@ -68,7 +68,8 @@ export function setSession(threadId: string, entry: SessionEntry): void {
 export async function ensureSession(
   threadId: string,
   channelId: string,
-  cwd: string
+  cwd: string,
+  remoteControlNameOverride?: string
 ): Promise<SessionEntry & { isNew: boolean }> {
   const existing = getSession(threadId);
   if (existing) {
@@ -76,8 +77,8 @@ export async function ensureSession(
   }
 
   const sessionId = crypto.randomUUID();
-  // TODO(M4): makeRemoteControlName(thread) で Discord スレッドオブジェクトから生成する
-  const remoteControlName = `dcc-${threadId.slice(-8)}`;
+  // M5 から makeRemoteControlName(thread) で生成した名前を渡す。未指定時は threadId の末尾から生成する。
+  const remoteControlName = remoteControlNameOverride ?? `dcc-${threadId.slice(-8)}`;
 
   const now = new Date().toISOString();
   const entry: SessionEntry = {
