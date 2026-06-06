@@ -1,0 +1,17 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Worktree and Trinity runtime
+.worktrees/
+.trinity/
+
+# Dependencies
+node_modules/
+
+# Session data
+data/
+
+# Build output
+dist/
