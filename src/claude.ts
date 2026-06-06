@@ -130,7 +130,7 @@ export function runClaude(opts: RunClaudeOptions): Promise<ClaudeResult> {
       });
     });
 
-    child.on("close", () => {
+    child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
       try {
         const json = JSON.parse(stdout) as {
           type?: string;
@@ -146,8 +146,10 @@ export function runClaude(opts: RunClaudeOptions): Promise<ClaudeResult> {
         });
       } catch {
         const detail = stderr.trim() || stdout.trim() || "（出力なし）";
+        const exitInfo = signal ? `signal=${signal}` : `exit=${code ?? "null"}`;
+        console.error(`[claude] JSON parse failed (${exitInfo}): ${detail.slice(0, 500)}`);
         finish({
-          text: `（応答の解析に失敗しました: ${detail.slice(0, 500)}）`,
+          text: `（応答の解析に失敗しました [${exitInfo}]: ${detail.slice(0, 500)}）`,
           sessionId,
           isError: true,
         });

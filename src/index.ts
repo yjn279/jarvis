@@ -124,17 +124,20 @@ async function handleMessage(message: Message): Promise<void> {
   // 応答先スレッドを決定する（要件2）:
   //   チャンネルでメンション → 新規スレッドを生成
   //   スレッド内 → 同スレッドを継続
-  const thread: ThreadChannel = inThread
-    ? (channel as ThreadChannel)
-    : await message.startThread({
-        name: makeThreadTitle(userText),
-        autoArchiveDuration: 1440,
-      });
-
-  await message.react("👀").catch(() => {});
-  const typing = keepTyping(thread);
+  let thread: ThreadChannel | undefined;
+  let typing: { stop: () => void } | undefined;
 
   try {
+    thread = inThread
+      ? (channel as ThreadChannel)
+      : await message.startThread({
+          name: makeThreadTitle(userText),
+          autoArchiveDuration: 1440,
+        });
+
+    await message.react("👀").catch(() => {});
+    typing = keepTyping(thread);
+
     // 親チャンネル ID の解決
     const parentChannelId = inThread
       ? ((channel as ThreadChannel).parentId ?? channel.id)
@@ -167,9 +170,14 @@ async function handleMessage(message: Message): Promise<void> {
     await sendChunked(thread, result.text);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    await thread.send(`（エラーが発生しました: ${detail.slice(0, 400)}）`).catch(() => {});
+    if (thread) {
+      await thread.send(`（エラーが発生しました: ${detail.slice(0, 400)}）`).catch(() => {});
+    } else {
+      // スレッド生成失敗: 元メッセージへフォールバック
+      await message.reply(`（スレッドの作成に失敗しました: ${detail.slice(0, 400)}）`).catch(() => {});
+    }
   } finally {
-    typing.stop();
+    typing?.stop();
   }
 }
 

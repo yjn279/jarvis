@@ -12,7 +12,7 @@ export interface SessionEntry {
   cwd: string;
   /**
    * --remote-control に渡す安定名。
-   * TODO(M4): makeRemoteControlName(thread) に置き換える。
+   * index.ts で makeRemoteControlName(thread) を呼び出し、remoteControlNameOverride として渡される。
    */
   remoteControlName: string;
   createdAt: string;
@@ -77,7 +77,7 @@ export async function ensureSession(
   }
 
   const sessionId = crypto.randomUUID();
-  // M5 から makeRemoteControlName(thread) で生成した名前を渡す。未指定時は threadId の末尾から生成する。
+  // makeRemoteControlName(thread) で生成した名前を呼び出し元から渡す。未指定時は threadId の末尾から生成する。
   const remoteControlName = remoteControlNameOverride ?? `dcc-${threadId.slice(-8)}`;
 
   const now = new Date().toISOString();
@@ -90,6 +90,9 @@ export async function ensureSession(
     updatedAt: now,
   };
 
+  // in-memory マップへの登録を await なしの同期処理で完結させ、
+  // 同一スレッドへの同時リクエストによる二重採番を防ぐ。
+  // persist() も同期関数のため、store への書き込みから永続化まで途切れなく実行される。
   store[threadId] = entry;
   persist();
 
