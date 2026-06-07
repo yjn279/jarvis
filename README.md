@@ -25,6 +25,7 @@ flowchart LR
 | `CHANNEL_CWD_MAP` | no | `{}` | チャンネル ID → 作業ディレクトリの JSON マップ（例: `{"1234":"~/projects/foo"}`）。値の先頭 `~` はホームに展開し、相対パスは絶対パスへ解決する。未登録チャンネルは `DEFAULT_WORKDIR` にフォールバック |
 | `DEFAULT_WORKDIR` | no | 実行ユーザーのホームディレクトリ | `CHANNEL_CWD_MAP` に載っていないチャンネルの既定 cwd（未設定時は `os.homedir()` を使用）。`~`・相対パスは展開・絶対パス化される（例: `~/projects`） |
 | `CLAUDE_PERMISSION_MODE` | no | `default` | `--permission-mode` に渡す値。 `default` / `acceptEdits` / `bypassPermissions` から選ぶ |
+| `CLAUDE_TIMEOUT_MS` | no | `1800000`（30分） | 1応答あたりのタイムアウト（ミリ秒）。`0` で無効。到達時は子プロセスツリーへ SIGTERM→猶予→SIGKILL の段階的終了 |
 | `REMOTE_CONTROL_ENABLED` | no | `true` | `true` のとき `--remote-control` を付与し、Claude デスクトップアプリでセッションを確認できる |
 | `CLAUDE_MODEL` | no | （claude 既定） | `--model` に渡すモデル識別子。空のとき claude 自身の既定モデルを使う |
 | `DATA_DIR` | no | `./data` | `sessions.json` を保存するディレクトリ。絶対パスを推奨 |

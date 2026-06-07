@@ -34,13 +34,10 @@ export interface RunClaudeOptions {
 }
 
 /**
- * 1応答あたりのタイムアウト上限（ミリ秒）。
- * claude の初回起動やモデルダウンロードを考慮して余裕を持たせる。
- *
- * 注: macOS には timeout コマンドが存在しないため、
- * ここでは setTimeout + SIGKILL によるプロセス時間制限を行う。
+ * タイムアウト到達後、SIGTERM で猶予を与えてから SIGKILL するまでの待機（ミリ秒）。
+ * claude に後始末（書き込み中ファイルの整合・子プロセスの停止）の機会を残す。
  */
-const TIMEOUT_MS = 2 * 60 * 1000; // 120 秒
+const KILL_GRACE_MS = 10 * 1000; // 10 秒
 
 /**
  * `claude -p` をヘッドレス起動し、結果を返す。
@@ -91,33 +88,63 @@ export function runClaude(opts: RunClaudeOptions): Promise<ClaudeResult> {
     args.push("--model", config.model);
   }
 
+  const timeoutMs = config.claudeTimeoutMs; // 0 で無効
+
   return new Promise<ClaudeResult>((resolve) => {
     let settled = false;
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
+    let graceTimer: NodeJS.Timeout | undefined;
+
+    const clearTimers = (): void => {
+      if (timer) clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
+    };
 
     const finish = (result: ClaudeResult): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      clearTimers();
       resolve(result);
     };
 
+    // detached:true で子は新しいプロセスグループのリーダーになる。
+    // これにより、claude が起動した孫プロセス（npm・dev server・git 等）まで
+    // -pid（プロセスグループ宛て）でまとめてシグナルを送れる（孤児化を防ぐ）。
     const child = spawn("claude", args, {
       cwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: true,
     });
+
+    /** 子プロセスグループ全体へシグナルを送る。グループ送信に失敗したら単体へフォールバック。 */
+    const signalTree = (signal: NodeJS.Signals): void => {
+      const pid = child.pid;
+      if (pid === undefined) return;
+      try {
+        process.kill(-pid, signal); // 負の pid = プロセスグループ全体
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          /* 既に終了している */
+        }
+      }
+    };
 
     let stdout = "";
     let stderr = "";
 
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      finish({
-        text: "（応答がタイムアウトしました。もう一度試してください）",
-        sessionId,
-        isError: true,
-      });
-    }, TIMEOUT_MS);
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        // SIGKILL は捕捉不能でクリーンアップが走らないため、まず SIGTERM で猶予を与える。
+        signalTree("SIGTERM");
+        // 猶予後も終了しなければ SIGKILL で確実に停止する。
+        graceTimer = setTimeout(() => signalTree("SIGKILL"), KILL_GRACE_MS);
+      }, timeoutMs);
+    }
 
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -131,6 +158,15 @@ export function runClaude(opts: RunClaudeOptions): Promise<ClaudeResult> {
     });
 
     child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      if (timedOut) {
+        const mins = Math.round(timeoutMs / 60000);
+        finish({
+          text: `（応答が約 ${mins} 分のタイムアウトに達したため中断しました。長時間の作業が必要な場合は CLAUDE_TIMEOUT_MS を延長してください）`,
+          sessionId,
+          isError: true,
+        });
+        return;
+      }
       try {
         const json = JSON.parse(stdout) as {
           type?: string;
