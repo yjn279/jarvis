@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import {
   Client,
   Events,
@@ -195,9 +196,12 @@ async function handleMessage(message: Message): Promise<void> {
 // ---------------------------------------------------------------------------
 // Entry guard — login runs only when this file is the entry point.
 // Importing index.ts for unit tests does NOT trigger client.login().
+// pathToFileURL を使うことで realpath/percent-encoding の差異（symlink・空白・# 等）
+// による比較ミスマッチを避ける。手書きの new URL(argv[1], "file://") では起動経路が
+// /tmp→/private/tmp のような symlink を含むと false になり Bot が黙って起動しなかった（#8）。
 // ---------------------------------------------------------------------------
 
-if (import.meta.url === new URL(process.argv[1], "file://").href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   client.login(config.token).catch((err: unknown) => {
     const detail = err instanceof Error ? err.message : String(err);
     console.error(`Discord ログイン失敗: ${detail}`);
