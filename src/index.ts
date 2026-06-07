@@ -17,6 +17,7 @@ import {
   keepTyping,
   resolveTopic,
   makeRemoteControlName,
+  buildHistoryPreamble,
 } from "./discord.js";
 
 // ---------------------------------------------------------------------------
@@ -158,9 +159,17 @@ async function handleMessage(message: Message): Promise<void> {
     // topic 注入（要件6）
     const topic = resolveTopic(channel);
 
+    // 既存スレッドだがセッション未登録のとき（再起動後・sessions.json 消失・人手作成
+    // スレッドなど）、過去ログを文脈として prompt に前置する（要件3 / #9）。
+    let prompt = userText;
+    if (inThread && !isKnownThread) {
+      const preamble = await buildHistoryPreamble(thread, message.id, botId);
+      if (preamble) prompt = preamble + userText;
+    }
+
     // claude 実行（要件7透過, 要件8 remote-control）
     const result = await runClaude({
-      prompt: userText,
+      prompt,
       sessionId: session.sessionId,
       isNew: session.isNew,
       cwd: session.cwd,
