@@ -135,7 +135,7 @@ claude はローカルのファイルシステムとシェルに対してプロ�
 
 - **headless スラッシュコマンド制約**: `-p` ヘッドレスモードでは claude 組み込みの `/help` 等が利用不可（"isn't available in this environment" を返す）。カスタムスラッシュコマンドやプロジェクトスラッシュは stdin 透過で動作する。全コマンドを有効にする場合は `--input-format stream-json` 常駐 PTY 方式への拡張が必要（Out of Scope）。
 - **コンテナ隔離**: 要件5の cwd 切替でサンドボックスを代替している。Docker 等によるプロセス隔離は実装していない。 `src/claude.ts` の cwd 解決を差し替えることで拡張できる。
-- **stream-json 常駐**: 現在の実装は1メッセージ1プロセス起動方式。長時間の対話セッション最適化が必要な場合は常駐方式への移行を検討する（Out of Scope）。
+- **stream-json 常駐 / 対話 UI**: 現在の実装は1メッセージ1プロセス起動方式で、`AskUserQuestion` / プラン承認 / 許可プロンプトの Discord ネイティブ UI（Issue #2）は対象外。実機調査の結果、生 stream-json では許可が自動拒否され対話化できないため、常駐セッション方式への移行が必要となる。方針と選択肢（公式 Discord チャネルプラグインの採用を推奨）は [docs/interactive-ui.md](docs/interactive-ui.md) を参照。
 
 ## Manual Smoke Test
 
