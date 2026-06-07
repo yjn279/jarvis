@@ -68,6 +68,11 @@ export function shouldHandle(args: ShouldHandleArgs): boolean {
 // Discord Client
 // ---------------------------------------------------------------------------
 
+// 同一メッセージの並行処理を防ぐ。Gateway の二重配信や再接続リプレイで同じ
+// メッセージ ID に対して MessageCreate が複数届いた場合、2 本目以降は無視する。
+// Set への has/add はマイクロタスクをはさまず同期的なので競合しない。
+const processingMessages = new Set<string>();
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -83,10 +88,14 @@ client.once(Events.ClientReady, (c) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
+  if (processingMessages.has(message.id)) return;
+  processingMessages.add(message.id);
   try {
     await handleMessage(message);
   } catch (err) {
     console.error("メッセージ処理エラー:", err);
+  } finally {
+    processingMessages.delete(message.id);
   }
 });
 
