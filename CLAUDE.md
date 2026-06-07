@@ -4,30 +4,26 @@
 
 ## Operations
 
-### Shared Token
+本 Bot は standalone デーモンとして常駐稼働する。`screen` セッション `dcc` の中で `boot.sh`（`npm start` = `tsx src/index.ts` を無限ループで監視・自動再起動）が動き、`.env` の実トークンで Discord に接続する。クラッシュ時は 5 秒後に自動再起動するが、マシン再起動は生き延びない（launchd 等の自動起動は未設定）。
 
-本 Bot と常駐アシスタント（公式 channel plugin）は同一の Discord Bot トークンを使う。Discord は同一トークンで Gateway 接続を1つしか許可しないため、両者を同時に起動すると接続を奪い合い、二重応答や接続の不安定化を招く。本 Bot を起動する前に、必ず常駐アシスタントを停止する（背景は README の「Token Conflict」を参照）。
+### Deploying
 
-### Stopping the Assistant
-
-常駐アシスタントは `screen -dmS discord` の中で `confirm-loop.py` が `claude … plugin:discord` を `while true` ループで常駐管理する構成で動く。
-
-ここで注意すべきは、`screen -S discord -X quit` が screen マネージャを終了させるだけで、配下の `confirm-loop.py` と `claude` は孤児化して動き続ける点である。screen を quit しただけでは Discord への応答もトークン競合も止まらない。
-
-確実に停止するには、ループ本体ごとプロセスツリーを止める。次の `pkill` は bash の `while true` ループ・`confirm-loop.py`・screen のいずれの行にもマッチするため、再起動ループを含めて一括で停止できる。`while true` ループを残したまま `claude` だけを kill すると 5 秒後に再起動される点に注意する。
+このワークツリーで以下を実行して常駐させる。`node`（mise shims）と `claude`（`~/.local/bin`）を PATH に通す点が要諦で、これを欠くと SDK が `claude` を spawn できずに無言で失敗する。
 
 ```sh
-pkill -f confirm-loop.py
-# 取りこぼしがないことを確認する（出力が空なら完全停止）
-ps aux | grep -E "[c]onfirm-loop|[d]angerously-load-development-channels"
+screen -dmS dcc bash -lc 'export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$HOME/.bun/bin:$PATH"; cd <このワークツリー>; exec sh boot.sh >> /tmp/dcc-standalone.log 2>&1'
 ```
 
-### Restarting the Assistant
+起動確認は `/tmp/dcc-standalone.log` に `Ready: JARVIS#…` が出ること、Discord のメンバー一覧で Bot がオンライン表示になることの2点で行う。
 
-停止後に常駐へ戻すときは、元の supervisor をそのまま再生成する。
+### Stopping / Restarting
 
-```sh
-screen -dmS discord bash -lc 'export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"; cd "$HOME"; while true; do python3 /Users/yuji/.claude/channels/discord/confirm-loop.py claude --dangerously-load-development-channels plugin:discord@claude-discord-plugin; sleep 5; done >> /tmp/discord-plugin.log 2>&1'
-```
+停止は `screen -S dcc -X quit` で screen ごと止める。boot.sh のループも screen 内にあるため、quit で配下の `node` まで停止する。孤児が残った場合のみ `pkill -f "src/index.ts"` で取りこぼす。コード更新後の再起動は `node` を kill すれば boot.sh が 5 秒後に再起動する。
 
-復元後は `screen -ls` に `discord` セッションが現れ、`claude … plugin:discord` プロセスが起動することを確認する。Discord 側ではメンバー一覧で Bot がオンライン表示になることを確認する。
+### Shared Token Conflict
+
+Discord は同一トークンの Gateway 接続を実質1つしか有効化しない。同じトークンで接続する別プロセスがあると、接続を奪い合い、メッセージの取りこぼしや二重応答を招く。
+
+過去に本リポジトリ（channel-plugin ブランチ）の `.mcp.json` が `jarvis` MCP（`bun server.ts`）を定義しており、このリポジトリで Claude Code セッションを開くたびに同一トークンで Discord へ接続し、standalone と競合していた。実機検証で最初のメッセージがこの競合接続に奪われ standalone に届かない事象を確認したため、`.mcp.json` から `jarvis` を撤去した（撤去後は走行中セッションも MCP を再生成せず、競合が解消することを確認）。
+
+standalone 稼働中は次を守る。同一トークンの Discord MCP を `.mcp.json` に再追加しない。channel plugin を同トークンで起動しない。恒久的に分離する最も安全な方法は、standalone へ専用の Discord Bot トークンを割り当てることである。
