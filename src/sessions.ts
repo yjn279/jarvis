@@ -12,7 +12,7 @@ export interface SessionEntry {
   cwd: string;
   /**
    * --remote-control に渡す安定名。
-   * index.ts で makeRemoteControlName(thread) を呼び出し、remoteControlNameOverride として渡される。
+   * index.ts で makeRemoteControlName(thread) を生成し、ensureSession に渡す。
    */
   remoteControlName: string;
   createdAt: string;
@@ -57,18 +57,6 @@ export function getSession(threadId: string): SessionEntry | undefined {
   return store[threadId];
 }
 
-/** スレッド↔セッションの対応を記録（既存なら updatedAt のみ更新）。 */
-export function setSession(threadId: string, entry: SessionEntry): void {
-  const now = new Date().toISOString();
-  const existing = store[threadId];
-  store[threadId] = {
-    ...entry,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  };
-  persist();
-}
-
 /**
  * スレッドに紐づくセッションを解決し、必要なら新規に採番して予約する。
  *
@@ -87,7 +75,7 @@ export async function ensureSession(
   threadId: string,
   channelId: string,
   cwd: string,
-  remoteControlNameOverride?: string
+  remoteControlName: string
 ): Promise<SessionEntry & { isNew: boolean }> {
   const committed = store[threadId];
   if (committed) {
@@ -100,9 +88,6 @@ export async function ensureSession(
   }
 
   const sessionId = crypto.randomUUID();
-  // makeRemoteControlName(thread) で生成した名前を呼び出し元から渡す。未指定時は threadId の末尾から生成する。
-  const remoteControlName = remoteControlNameOverride ?? `dcc-${threadId.slice(-8)}`;
-
   const now = new Date().toISOString();
   const entry: SessionEntry = {
     sessionId,

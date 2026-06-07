@@ -72,7 +72,6 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent, // 特権インテント（Developer Portal で要有効化）
-    GatewayIntentBits.GuildMessageTyping,
   ],
   partials: [Partials.Channel, Partials.Message],
 });

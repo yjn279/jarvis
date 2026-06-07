@@ -50,7 +50,9 @@ export function splitText(text: string, limit: number = DISCORD_MAX): string[] {
     let cut = slice.lastIndexOf("\n");
     if (cut < limit * 0.5) cut = slice.lastIndexOf(" ");
     if (cut < limit * 0.5) cut = limit;
-    chunks.push(rest.slice(0, cut).trimEnd());
+    const piece = rest.slice(0, cut).trimEnd();
+    // 空白主体スライスの trimEnd で生じる空チャンクは送らない（Discord が空メッセージを拒否）（#11）
+    if (piece) chunks.push(piece);
     rest = rest.slice(cut).trimStart();
   }
   if (rest) chunks.push(rest);
@@ -59,8 +61,11 @@ export function splitText(text: string, limit: number = DISCORD_MAX): string[] {
 
 /** 応答を 2000 文字ごとに分割して順番に送る。 */
 export async function sendChunked(thread: ThreadChannel, text: string): Promise<void> {
-  const body = text.length > 0 ? text : "（応答がありませんでした）";
-  for (const chunk of splitText(body, DISCORD_MAX)) {
+  const body = text.trim().length > 0 ? text : "（応答がありませんでした）";
+  // 空チャンクを除外し、全滅したらプレースホルダを送る（thread.send("") は拒否される）
+  const chunks = splitText(body, DISCORD_MAX).filter((chunk) => chunk.trim().length > 0);
+  const toSend = chunks.length > 0 ? chunks : ["（応答がありませんでした）"];
+  for (const chunk of toSend) {
     await thread.send(chunk);
   }
 }

@@ -106,7 +106,7 @@ export const config = {
    */
   channelCwdMap,
 
-  /** allowlist に載っていないチャンネルの既定 cwd。 */
+  /** channelCwdMap に載っていないチャンネルの既定 cwd（絶対パス）。 */
   defaultWorkdir,
 
   /** claude のパーミッションモード。 */
