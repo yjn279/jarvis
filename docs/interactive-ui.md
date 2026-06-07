@@ -55,7 +55,7 @@ flowchart LR
 
 「常に許可」は `canUseTool` が渡す `suggestions` を `updatedPermissions` として返し、同一セッション内で同じツールを再確認しない。プラン承認後はブリッジ単位の状態を `acceptEdits` に切り替え、編集ツール（Write・Edit・MultiEdit・NotebookEdit）を無確認で自動許可して実行中の逐次プロンプトでスレッドを埋めない。`setMode(acceptEdits)` 単体では `canUseTool` を抑止できない（Verification 節）ため、この自動許可はブリッジ側で担う。Bash 等の非編集ツールは承認後も確認を継続する。状態はスレッド（ブリッジ）に閉じ、別スレッドへ波及しない。
 
-計画モードへの遷移は slash command `/claude` の `plan` オプション（`plan:true`）で行う。指定したターンを `permissionMode: "plan"` で起動し、モデルが `ExitPlanMode` を呼んだ時点で承認 UI を提示する。
+計画モードの起動は専用 UI を設けず、`CLAUDE_PERMISSION_MODE`（既定 `default`、`plan` 指定可）に従う。`plan` モードのターンでモデルが `ExitPlanMode` を呼んだ時点で、本ブリッジが計画本文と承認／却下ボタンを提示する。Bot 独自の Discord slash command は登録せず、`/` で始まる本文は Claude へ透過して Claude Code の slash command として実行する（要件7）。
 
 ## Permission Mode
 

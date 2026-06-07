@@ -4,11 +4,8 @@ import {
   Events,
   GatewayIntentBits,
   Partials,
-  SlashCommandBuilder,
-  MessageFlags,
   type Message,
   type ThreadChannel,
-  type Interaction,
 } from "discord.js";
 import { config, resolveCwd } from "./config.js";
 import { ensureSession, getSession, commitSession, rollbackSession, closeSession } from "./sessions.js";
@@ -80,24 +77,9 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message],
 });
 
-// Discord ネイティブ slash command 定義（#3）。メンション起動と併存する。
-const claudeCommands = [
-  new SlashCommandBuilder()
-    .setName("claude")
-    .setDescription("Claude Code を起動し、スレッドで応答します")
-    .addStringOption((o) =>
-      o.setName("prompt").setDescription("Claude への指示").setRequired(true)
-    )
-    .addBooleanOption((o) =>
-      o.setName("plan").setDescription("計画モードで起動し、実行前に計画の承認を求める").setRequired(false)
-    )
-    .toJSON(),
-];
-
-client.once(Events.ClientReady, async (c) => {
+client.once(Events.ClientReady, (c) => {
   console.log(`Ready: ${c.user.tag} (${c.user.id})`);
   console.log("  Guild 内でメンションするとスレッドを生成して応答します。");
-  await registerSlashCommands(c);
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -125,19 +107,6 @@ client.on(Events.ThreadUpdate, (oldThread, newThread) => {
       console.log(`スレッドのアーカイブに伴いセッションを閉じました: ${newThread.id}`);
     }
   }
-});
-
-// 後から参加したギルドにも slash command を登録する（#3）。
-client.on(Events.GuildCreate, (guild) => {
-  guild.commands
-    .set(claudeCommands)
-    .catch((err: unknown) => console.error("slash command の登録に失敗:", err));
-});
-
-client.on(Events.InteractionCreate, (interaction) => {
-  handleInteraction(interaction).catch((err: unknown) =>
-    console.error("インタラクション処理エラー:", err)
-  );
 });
 
 // ---------------------------------------------------------------------------
@@ -208,7 +177,7 @@ async function handleMessage(message: Message): Promise<void> {
 
 /**
  * スレッド内で claude を起動し、応答を分割送信する共通処理。
- * メンション起動・スレッド継続（handleMessage）と slash command（#3）の双方から使う。
+ * メンション起動・スレッド継続（handleMessage）から使う。
  *
  * セッション解決（要件4,5,8）・topic 注入（要件6）・履歴前置（要件3 / #9）・
  * 確定/破棄（#5）をここに集約する。typing 表示はこの関数の責務とする。
@@ -217,7 +186,7 @@ async function respondInThread(
   thread: ThreadChannel,
   parentChannelId: string,
   userText: string,
-  opts: { historyBeforeId?: string; plan?: boolean } = {}
+  opts: { historyBeforeId?: string } = {}
 ): Promise<void> {
   const typing = keepTyping(thread);
   try {
@@ -253,7 +222,9 @@ async function respondInThread(
       timeoutMs: config.interactionTimeoutMs,
     });
 
-    // claude 実行（要件7透過 / 対話 UI #2 / plan 指定時は計画モード）
+    // claude 実行。userText は stripMention 済みで先頭の `/command` も保持されるため、
+    // SDK の query() がそれを slash command として解釈・実行する（要件7: 透過）。
+    // permissionMode は config 既定（既定 default）に委ね、対話 UI #2 を発火させる。
     const result = await runClaude({
       prompt,
       sessionId: session.sessionId,
@@ -262,7 +233,6 @@ async function respondInThread(
       topic,
       remoteControlName: session.remoteControlName,
       canUseTool,
-      permissionMode: opts.plan ? "plan" : undefined,
     });
 
     // 新規セッションは初回成功で確定、失敗で破棄（#5）
@@ -274,78 +244,6 @@ async function respondInThread(
     await sendChunked(thread, result.text);
   } finally {
     typing.stop();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Slash commands (#3)
-// ---------------------------------------------------------------------------
-
-/**
- * 参加中の全ギルドへ slash command を登録する（即時反映のためギルド単位）。
- * ギルド招待時に applications.commands スコープが無いと Missing Access になるため、
- * 失敗はログに留めてメンション起動の動作は妨げない。
- */
-async function registerSlashCommands(c: Client<true>): Promise<void> {
-  try {
-    await Promise.all(c.guilds.cache.map((g) => g.commands.set(claudeCommands)));
-    console.log(`  /claude を ${c.guilds.cache.size} ギルドに登録しました。`);
-  } catch (err) {
-    console.error("slash command の登録に失敗:", err);
-  }
-}
-
-/**
- * `/claude <prompt>` を処理する。メンション起動と同じセッション解決・起動層を通すため、
- * スレッドを用意して respondInThread に委譲する。allowlist は slash command にも適用する。
- */
-async function handleInteraction(interaction: Interaction): Promise<void> {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "claude") return;
-
-  // アクセス制御: allowlist を slash command にも適用（空なら全員許可）
-  if (config.allowUserIds.length > 0 && !config.allowUserIds.includes(interaction.user.id)) {
-    await interaction
-      .reply({ content: "このコマンドの実行は許可されていません。", flags: MessageFlags.Ephemeral })
-      .catch(() => {});
-    return;
-  }
-
-  if (!interaction.inGuild()) {
-    await interaction
-      .reply({ content: "このコマンドはサーバー内でのみ使えます。", flags: MessageFlags.Ephemeral })
-      .catch(() => {});
-    return;
-  }
-
-  const promptText = interaction.options.getString("prompt", true);
-  const plan = interaction.options.getBoolean("plan") ?? false;
-  const channel = interaction.channel;
-  const planNote = plan ? "（計画モード）" : "";
-
-  try {
-    // 既存スレッド内での実行 → そのスレッドを継続する
-    if (channel?.isThread()) {
-      await interaction.reply({ content: `🤖 実行します${planNote}: ${promptText.slice(0, 100)}` });
-      const parentChannelId = channel.parentId ?? channel.id;
-      await respondInThread(channel, parentChannelId, promptText, { plan });
-      return;
-    }
-
-    // テキストチャンネル → 返信メッセージから新規スレッドを生成して実行（要件2 と同型）
-    await interaction.reply({ content: `🧵 スレッドを作成して実行します${planNote}…` });
-    const replyMsg = await interaction.fetchReply();
-    const thread = await replyMsg.startThread({
-      name: makeThreadTitle(promptText),
-      autoArchiveDuration: 1440,
-    });
-    await respondInThread(thread, channel?.id ?? thread.parentId ?? thread.id, promptText, { plan });
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    console.error("slash command 実行エラー:", err);
-    await interaction
-      .followUp({ content: `（実行に失敗しました: ${detail.slice(0, 400)}）`, flags: MessageFlags.Ephemeral })
-      .catch(() => {});
   }
 }
 
