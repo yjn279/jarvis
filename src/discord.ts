@@ -2,7 +2,6 @@ import type {
   ThreadChannel,
   TextChannel,
   NewsChannel,
-  AnyThreadChannel,
   Channel,
 } from "discord.js";
 
@@ -107,8 +106,11 @@ export async function buildHistoryPreamble(
  * topic が無ければ空文字を返す。discord.js v14 の型でナローイングし安全に参照する。
  */
 export function resolveTopic(channel: Channel): string {
-  // スレッドチャンネルの場合は親を辿る
-  if (isThread(channel)) {
+  // スレッドチャンネルの場合は親を辿る。
+  // discord.js の channel.isThread() を使う。自前の "parent" in channel 判定は
+  // GuildChannel を継承する TextChannel/NewsChannel も true にしてしまい、初回ターンの
+  // topic 注入が欠落していた（#7）。
+  if (channel.isThread()) {
     const parent = channel.parent;
     if (parent && "topic" in parent && typeof parent.topic === "string") {
       return parent.topic;
@@ -122,11 +124,6 @@ export function resolveTopic(channel: Channel): string {
   }
 
   return "";
-}
-
-/** discord.js v14 でスレッド系チャンネルかを判定するナローイング関数。 */
-function isThread(channel: Channel): channel is AnyThreadChannel {
-  return "parent" in channel && "parentId" in channel;
 }
 
 // ---------------------------------------------------------------------------
