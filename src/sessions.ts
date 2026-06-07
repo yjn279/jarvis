@@ -122,3 +122,20 @@ export function commitSession(threadId: string): void {
 export function rollbackSession(threadId: string): void {
   pending.delete(threadId);
 }
+
+/**
+ * スレッドのクローズ/アーカイブ/削除に伴いセッションを閉じる（#4）。
+ * 確定済みエントリ・予約のいずれも破棄し、以後 --resume も応答も行わない。
+ * 確定済みを実際に削除したときのみ persist する。
+ *
+ * @returns 何らかのエントリを破棄したとき true。
+ */
+export function closeSession(threadId: string): boolean {
+  const hadPending = pending.delete(threadId);
+  if (store[threadId]) {
+    delete store[threadId];
+    persist();
+    return true;
+  }
+  return hadPending;
+}

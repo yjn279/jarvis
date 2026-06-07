@@ -8,7 +8,7 @@ import {
   type ThreadChannel,
 } from "discord.js";
 import { config, resolveCwd } from "./config.js";
-import { ensureSession, getSession, commitSession, rollbackSession } from "./sessions.js";
+import { ensureSession, getSession, commitSession, rollbackSession, closeSession } from "./sessions.js";
 import { runClaude } from "./claude.js";
 import {
   stripMention,
@@ -86,6 +86,25 @@ client.on(Events.MessageCreate, async (message) => {
     await handleMessage(message);
   } catch (err) {
     console.error("メッセージ処理エラー:", err);
+  }
+});
+
+// スレッドのクローズ/アーカイブ/削除でセッションを閉じる（#4）。
+// 閉じた後は getSession が undefined を返すため isKnownThread=false となり、
+// 以後はメンションが無い限り応答しない。アーカイブ解除（新規メッセージ投稿）時は
+// 「新規スレッド」扱いとなり、要件3 の履歴プリアンブル（#9）で文脈を引き継ぐ。
+client.on(Events.ThreadDelete, (thread) => {
+  if (closeSession(thread.id)) {
+    console.log(`スレッド削除に伴いセッションを閉じました: ${thread.id}`);
+  }
+});
+
+client.on(Events.ThreadUpdate, (oldThread, newThread) => {
+  // アーカイブされた瞬間（false → true）のみ反応する。リネーム等の他更新は無視。
+  if (!oldThread.archived && newThread.archived) {
+    if (closeSession(newThread.id)) {
+      console.log(`スレッドのアーカイブに伴いセッションを閉じました: ${newThread.id}`);
+    }
   }
 });
 
