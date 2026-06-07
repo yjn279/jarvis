@@ -7,7 +7,7 @@ import {
   type ThreadChannel,
 } from "discord.js";
 import { config, resolveCwd } from "./config.js";
-import { ensureSession, getSession } from "./sessions.js";
+import { ensureSession, getSession, commitSession, rollbackSession } from "./sessions.js";
 import { runClaude } from "./claude.js";
 import {
   stripMention,
@@ -166,6 +166,17 @@ async function handleMessage(message: Message): Promise<void> {
       topic,
       remoteControlName: session.remoteControlName,
     });
+
+    // セッションの確定/破棄（#5）: 新規セッションは初回が成功して初めて永続化し、
+    // 失敗時は予約を破棄する。これで claude 側に無い UUID をディスクに残さず、
+    // スレッドが恒久破損するのを防ぐ。
+    if (session.isNew) {
+      if (result.isError) {
+        rollbackSession(thread.id);
+      } else {
+        commitSession(thread.id);
+      }
+    }
 
     await sendChunked(thread, result.text);
   } catch (err) {

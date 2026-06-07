@@ -22,7 +22,17 @@ export interface SessionEntry {
 type Store = Record<string, SessionEntry>;
 
 const file = config.sessionsFile;
+
+/** ディスクへ確定済みのセッション（runClaude 初回成功を経たもの）。 */
 let store: Store = read();
+
+/**
+ * まだ確定していない新規セッションの予約。
+ * `ensureSession` で採番したエントリはここに置き、`commitSession`（初回 runClaude 成功）で
+ * `store` へ昇格・永続化する。`rollbackSession`（初回失敗）で破棄する。
+ * メモリ上のみに留めることで、claude 側に存在しない UUID をディスクへ書き残さない（#5）。
+ */
+const pending = new Map<string, SessionEntry>();
 
 function read(): Store {
   try {
@@ -39,7 +49,10 @@ function persist(): void {
   renameSync(tmp, file); // アトミックに差し替え、書き込み中断による破損を防ぐ
 }
 
-/** スレッドに紐づくセッションエントリを返す（無ければ undefined）。 */
+/**
+ * スレッドに紐づく確定済みセッションを返す（無ければ undefined）。
+ * 予約中（初回 runClaude 未成功）のセッションは「既知」とはみなさないため返さない。
+ */
 export function getSession(threadId: string): SessionEntry | undefined {
   return store[threadId];
 }
@@ -57,13 +70,18 @@ export function setSession(threadId: string, entry: SessionEntry): void {
 }
 
 /**
- * スレッドに紐づくセッションを解決し、必要なら新規に採番して永続化する。
+ * スレッドに紐づくセッションを解決し、必要なら新規に採番して予約する。
  *
- * - 初回呼び出し: uuid を採番し、cwd・remoteControlName・channelId を確定して保存する。
- * - 以降の呼び出し: 既存エントリをそのまま返す（uuid・cwd・remoteControlName は不変）。
+ * - 確定済みエントリがある: そのまま返す（`isNew=false`、`--resume`）。
+ * - 予約中エントリがある（初回がまだ成功していない）: 同じ uuid で再試行する（`isNew=true`、`--session-id`）。
+ * - どちらも無い: uuid を採番して **予約のみ** 行う（ディスクへは書かない）。`isNew=true`。
  *
- * 戻り値の `isNew` が true のとき M3 は `--session-id <uuid>` を、
- * false のとき `--resume <uuid>` を使う。
+ * 採番した新規エントリは {@link commitSession}（初回 runClaude 成功）で初めて永続化する。
+ * 失敗時は {@link rollbackSession} で予約を破棄する。これにより claude 側に存在しない
+ * UUID がディスクに残り、以降 `--resume` が永久に失敗する事態を防ぐ（#5）。
+ *
+ * 採番と予約は await を挟まない同期処理で完結させ、同一スレッドへの同時リクエストによる
+ * 二重採番を防ぐ。
  */
 export async function ensureSession(
   threadId: string,
@@ -71,9 +89,14 @@ export async function ensureSession(
   cwd: string,
   remoteControlNameOverride?: string
 ): Promise<SessionEntry & { isNew: boolean }> {
-  const existing = getSession(threadId);
-  if (existing) {
-    return { ...existing, isNew: false };
+  const committed = store[threadId];
+  if (committed) {
+    return { ...committed, isNew: false };
+  }
+
+  const reserved = pending.get(threadId);
+  if (reserved) {
+    return { ...reserved, isNew: true };
   }
 
   const sessionId = crypto.randomUUID();
@@ -90,11 +113,27 @@ export async function ensureSession(
     updatedAt: now,
   };
 
-  // in-memory マップへの登録を await なしの同期処理で完結させ、
-  // 同一スレッドへの同時リクエストによる二重採番を防ぐ。
-  // persist() も同期関数のため、store への書き込みから永続化まで途切れなく実行される。
-  store[threadId] = entry;
-  persist();
-
+  pending.set(threadId, entry); // 予約のみ。確定は commitSession まで遅延する。
   return { ...entry, isNew: true };
+}
+
+/**
+ * 予約中の新規セッションを確定し、ディスクへ永続化する（初回 runClaude 成功時に呼ぶ）。
+ * 予約が無ければ何もしない（resume セッションや二重呼び出しに対して安全）。
+ */
+export function commitSession(threadId: string): void {
+  const reserved = pending.get(threadId);
+  if (!reserved) return;
+  store[threadId] = reserved;
+  pending.delete(threadId);
+  persist();
+}
+
+/**
+ * 予約中の新規セッションを破棄する（初回 runClaude 失敗時に呼ぶ）。
+ * ディスクへは未書き込みのため、削除はメモリ上の予約のみで完結する。
+ * 確定済み（resume）セッションには触れない＝一時的失敗で既存セッションを壊さない。
+ */
+export function rollbackSession(threadId: string): void {
+  pending.delete(threadId);
 }
