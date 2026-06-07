@@ -1,57 +1,66 @@
 # Interactive UI
 
-Issue #2（Discord 上で対話 UI を扱う：`AskUserQuestion` / プラン承認 / 許可）への調査結果と方針をまとめる。結論として、対話 UI は本 PR の one-shot Bot へ独自実装するのではなく、Anthropic 公式の Discord チャネルプラグイン（常駐セッション方式）を採用して実現するのが妥当である。
+Issue #2（Discord 上で対話 UI を扱う：許可プロンプト・`AskUserQuestion`・プラン承認）の設計と実装をまとめる。結論として、対話 UI は `@anthropic-ai/claude-agent-sdk` の `canUseTool` コールバックを Discord のネイティブ UI（ボタン／セレクトメニュー）へ橋渡しすることで実現する。生 stream-json では許可が自動拒否され対話化できなかった制約を、SDK の制御チャネルで根本的に解消する。
 
 ## Background
 
-本 PR の Bot は `claude -p --output-format json` による「1 メッセージ 1 プロセス」のヘッドレス起動で動作する。プロセスはターンごとに生成・終了するため、Claude Code の対話 UI（選択肢ボタン・プラン承認・許可プロンプト）が Discord 上に描画されない。現状の回避策は、各セッションを `--remote-control` 付きで起動し、同じセッションを Claude アプリ側で開いて対話に応答する方法である（要件8）。
+旧実装は `claude -p` を「1 メッセージ 1 プロセス」で spawn し、標準入出力で生の stream-json を授受していた。この方式では Claude Code の対話 UI（選択肢・プラン承認・許可プロンプト）が Discord に描画されず、許可を要するツールは自動的に拒否された。回避策はセッションを `--remote-control` で起動し Claude アプリ側で応答する運用に限られていた。
 
-## Findings
-
-実機（`claude` 2.1.168）で stream-json 双方向モードを検証した結果、生の標準入出力だけでは対話的な許可・質問・プラン承認を扱えないことを確認した。出力は改行区切り JSON で、`system`（`init` ほか）・`assistant`（`content[].text`）・`result`（`is_error` / `result` / `session_id`）・`rate_limit_event` などのイベントから成る。入力は `{"type":"user","message":{"role":"user","content":"..."}}` を受け付ける。
-
-許可を要するツールを生 stream-json で実行させたところ、対話的な `control_request` は発行されず自動的に拒否された。返却された `tool_result` は次のとおりで、`is_error` が `true` であった。
-
-```text
-Claude requested permissions to write to .../probe.txt, but you haven't granted it yet.
-```
-
-したがって対話 UI には、許可・質問・プラン承認を仲介する制御チャネルが別途必要であり、生の stdin/stdout 透過だけでは要件を満たせない。
-
-## Architecture Options
-
-対話 UI を成立させる方式を比較する。対応範囲は「許可（ツール実行可否）」と「質問・プラン（`AskUserQuestion` / `ExitPlanMode`）」に分けて評価する。
-
-| 方式 | 対話的な許可 | 質問・プラン | 追加依存 | 備考 |
-| :-- | :-: | :-: | :-- | :-- |
-| 生 stream-json 透過 | 不可（自動拒否） | 不可 | なし | 本 PR の延長。要件未達 |
-| MCP `--permission-prompt-tool` | 可 | 不可 | MCP サーバ実装 | 許可のみ橋渡し。Bot との IPC が複雑 |
-| `@anthropic-ai/claude-agent-sdk` | 可 | 可 | SDK | `canUseTool` / hooks で堅牢。重い依存追加 |
-| 公式 Discord チャネルプラグイン | 可（セッション側） | 可（セッション側） | Bun / プラグイン | 常駐セッション。Discord ボタンは非対応 |
-
-## Official Plugin
-
-Anthropic 公式の Discord チャネルプラグイン `discord@claude-plugins-official` は、Claude Code を常駐の対話セッションとして起動し、Discord を MCP チャネルとして双方向に橋渡しする。Discord に届いたメッセージが実行中セッションへイベントとして到着し、Claude が同じチャネルへ返信する。これは Issue #2 の想定アプローチ（ワンショットからスレッド単位の常駐セッションへ）と同一の構造である。
-
-```mermaid
-flowchart LR
-  user[ユーザー] --> discord[Discord]
-  discord --> server[チャネルサーバー]
-  server --> session[常駐セッション]
-  session --> reply[返信]
-  reply --> discord
-```
-
-プラグインが公開する MCP ツールは送受信の transport に限られ、`reply` / `react` / `edit_message` / `fetch_messages` / `download_attachment` から成る。`AskUserQuestion` やプラン承認、許可プロンプトを Discord のボタン・モーダルとして描画する機能は公式プラグインにも存在しない。これらの対話フローは常駐セッション側で処理され、ユーザーは Discord のテキスト応答、または `--remote-control` 経由で応答する。
-
-本リポジトリでは作業ブランチ `feat/migrate-to-channel-plugin` で既にこの公式プラグインを fork・採用しており（`server.ts` / `bin/` / `docs/discord-channel.md`）、常駐セッション方式への移行が進んでいる。
-
-## Recommendation
-
-Issue #2 は本 PR の one-shot Bot に独自の対話 UI を実装するのではなく、公式 Discord チャネルプラグインの採用で解決することを推奨する。理由は次の三点である。第一に、公式プラグインは #2 が求める常駐対話セッションそのものであり、対話フロー（許可・質問・プラン）をセッション側で完結できる。第二に、`feat/migrate-to-channel-plugin` で既に採用が進んでおり、保守された経路に乗れる。第三に、生 stream-json への独自実装は要件を満たせず、SDK 追加や MCP 橋渡しは依存増と検証困難（Discord 往復の実機検証が必須）を伴うため、本 PR の最小依存方針（`discord.js` / `dotenv` のみ）と相容れない。
-
-リテラルな「Discord ネイティブのボタン UI」が必要な場合は、公式プラグインに依存しない上乗せ機能として、`@anthropic-ai/claude-agent-sdk` の `canUseTool` を用いた別 PR で扱う。許可・質問・プランの各制御リクエストを Discord の Buttons / Select / Modal にマッピングし、応答を制御チャネルへ返す設計とする。
+SDK 方式はこの構造を置き換える。各ターンを `query()` で実行し、ツール実行の可否を `canUseTool` が仲介する。許可・質問・プランの各制御リクエストをこのコールバックで受け取り、Discord のコンポーネントとして提示してユーザーの選択を SDK へ返す。
 
 ## Verification
 
-ローカルで検証済みなのは stream-json の入出力イベント形状と、生モードでの許可自動拒否の挙動である。Discord コンポーネントの往復（ボタン押下から制御応答までの一巡）は、Bot トークンと実サーバでの操作を要するため本環境では検証できない。実装に進む場合は実機での疎通確認を前提とする。
+実装に先立ち、SDK（`@anthropic-ai/claude-agent-sdk` 0.3.x）の実挙動を実機で検証した。検証で確認した事実を以下に示す。
+
+| 観点 | 確認結果 |
+| :-- | :-- |
+| 認証 | 端末にログイン済みの `claude` 資格情報をそのまま利用する（`apiKeySource: none` でも応答）。`ANTHROPIC_API_KEY` は不要 |
+| 許可プロンプト | `canUseTool` が全ツール実行前に発火する。`title` は headless では未設定のため本文は自前生成が必要 |
+| `AskUserQuestion` | `canUseTool` に `{questions:[{question, header, options, multiSelect}]}` が渡る。`{behavior:"allow", updatedInput:{questions, answers}}` で回答を返すとモデルが受領し継続する |
+| `ExitPlanMode` | `canUseTool` の `input.plan` に計画本文（Markdown）が入る。`deny` で計画モードを継続、`allow` で承認となる |
+
+## Architecture
+
+各 Discord メッセージを 1 ターンの `query()` として実行し、`canUseTool` をスレッドに束ねたブリッジへ接続する。セッションは新規時に `sessionId`、継続時に `resume` で UUID を指定し、スレッドと 1:1 で対応させる。
+
+```mermaid
+flowchart LR
+  message[Discordメッセージ] --> respond[ターン実行]
+  respond --> query[SDK query]
+  query --> control{制御リクエスト}
+  control --> permission[許可ボタン]
+  control --> question[質問セレクト]
+  control --> plan[プラン承認]
+  permission --> result[結果返信]
+  question --> result
+  plan --> result
+```
+
+ブリッジ（`src/interactive.ts`）は `canUseTool` の呼び出しをツール名で振り分ける。`AskUserQuestion` と `ExitPlanMode` は専用のレンダラへ、それ以外は汎用の許可レンダラへ渡す。各レンダラは Discord メッセージにコンポーネントを添えて送信し、応答を待って `PermissionResult` を返す。
+
+## Control Flows
+
+3 つの制御フローを Discord UI へ対応づける。いずれも操作可能なユーザーを `DISCORD_ALLOW_USER_IDS`（空＝全員）に限定し、応答待ちは `INTERACTION_TIMEOUT_MS`（既定 5 分）で打ち切って安全側（拒否）へ倒す。
+
+| フロー | トリガ | UI | 戻り値 |
+| :-- | :-- | :-- | :-- |
+| 許可 | 任意のツール実行 | ボタン（許可／常に許可／拒否） | allow ／ allow＋updatedPermissions ／ deny |
+| 質問 | `AskUserQuestion` | 質問ごとのセレクトメニュー | allow＋updatedInput.answers |
+| プラン承認 | `ExitPlanMode` | 計画本文＋ボタン（承認／却下） | allow＋setMode(acceptEdits) ／ deny |
+
+「常に許可」は `canUseTool` が渡す `suggestions` を `updatedPermissions` として返し、同一セッション内で同じツールを再確認しない。プラン承認時は `setMode` で `acceptEdits` へ切り替え、実行中の逐次プロンプトでスレッドを埋めないようにする。
+
+計画モードへの遷移は slash command `/claude` の `plan` オプション（`plan:true`）で行う。指定したターンを `permissionMode: "plan"` で起動し、モデルが `ExitPlanMode` を呼んだ時点で承認 UI を提示する。
+
+## Permission Mode
+
+`CLAUDE_PERMISSION_MODE` の既定 `default` で `canUseTool` が許可プロンプトを発火させ、Discord 上の対話確認が成立する。`acceptEdits` は編集を自動受理し、`bypassPermissions` はすべての確認を省略するため、対話 UI を活かすには `default` を使う。
+
+## Constraints
+
+実装上の制約と非対応範囲を以下に示す。
+
+- 選択肢は SDK が提示する `options` に限定し、`AskUserQuestion` の自由記述（「その他」）は扱わない。Discord のセレクトメニューが自由入力を持たないためで、必要ならモーダル入力での拡張余地がある。
+- ツール実行中の中間テキストはストリーミングせず、ターンの最終結果のみを分割返信する。対話 UI（許可・質問・プラン）が進行状況の可視化を兼ねる。
+- 旧 `--remote-control` は対話セッション専用フラグで headless `query()` と非互換のため使用しない。要件8（Claude アプリでのセッション確認）は、新規セッションのタイトルに安定名 `dcc-…` を付与して履歴から識別可能にすることで代替する。
+- ボタン／セレクトの応答待ちは `INTERACTION_TIMEOUT_MS` で、ターン全体は `CLAUDE_TIMEOUT_MS` で制限する。後者は許可待ち時間も含むため十分長く取る。

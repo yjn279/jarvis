@@ -22,6 +22,7 @@ import {
   makeRemoteControlName,
   buildHistoryPreamble,
 } from "./discord.js";
+import { makePermissionBridge } from "./interactive.js";
 
 // ---------------------------------------------------------------------------
 // Routing predicate (pure function, Discord-free — exported for unit testing)
@@ -86,6 +87,9 @@ const claudeCommands = [
     .setDescription("Claude Code を起動し、スレッドで応答します")
     .addStringOption((o) =>
       o.setName("prompt").setDescription("Claude への指示").setRequired(true)
+    )
+    .addBooleanOption((o) =>
+      o.setName("plan").setDescription("計画モードで起動し、実行前に計画の承認を求める").setRequired(false)
     )
     .toJSON(),
 ];
@@ -213,7 +217,7 @@ async function respondInThread(
   thread: ThreadChannel,
   parentChannelId: string,
   userText: string,
-  opts: { historyBeforeId?: string } = {}
+  opts: { historyBeforeId?: string; plan?: boolean } = {}
 ): Promise<void> {
   const typing = keepTyping(thread);
   try {
@@ -241,7 +245,15 @@ async function respondInThread(
       if (preamble) prompt = preamble + userText;
     }
 
-    // claude 実行（要件7透過, 要件8 remote-control）
+    // 対話的な許可・質問・プラン承認を Discord UI へ橋渡しするブリッジ（#2）。
+    // 操作可能なユーザーは shouldHandle と同じ allowlist 方針に揃える。
+    const canUseTool = makePermissionBridge({
+      thread,
+      allowUserIds: config.allowUserIds,
+      timeoutMs: config.interactionTimeoutMs,
+    });
+
+    // claude 実行（要件7透過 / 対話 UI #2 / plan 指定時は計画モード）
     const result = await runClaude({
       prompt,
       sessionId: session.sessionId,
@@ -249,6 +261,8 @@ async function respondInThread(
       cwd: session.cwd,
       topic,
       remoteControlName: session.remoteControlName,
+      canUseTool,
+      permissionMode: opts.plan ? "plan" : undefined,
     });
 
     // 新規セッションは初回成功で確定、失敗で破棄（#5）
@@ -305,25 +319,27 @@ async function handleInteraction(interaction: Interaction): Promise<void> {
   }
 
   const promptText = interaction.options.getString("prompt", true);
+  const plan = interaction.options.getBoolean("plan") ?? false;
   const channel = interaction.channel;
+  const planNote = plan ? "（計画モード）" : "";
 
   try {
     // 既存スレッド内での実行 → そのスレッドを継続する
     if (channel?.isThread()) {
-      await interaction.reply({ content: `🤖 実行します: ${promptText.slice(0, 100)}` });
+      await interaction.reply({ content: `🤖 実行します${planNote}: ${promptText.slice(0, 100)}` });
       const parentChannelId = channel.parentId ?? channel.id;
-      await respondInThread(channel, parentChannelId, promptText);
+      await respondInThread(channel, parentChannelId, promptText, { plan });
       return;
     }
 
     // テキストチャンネル → 返信メッセージから新規スレッドを生成して実行（要件2 と同型）
-    await interaction.reply({ content: "🧵 スレッドを作成して実行します…" });
+    await interaction.reply({ content: `🧵 スレッドを作成して実行します${planNote}…` });
     const replyMsg = await interaction.fetchReply();
     const thread = await replyMsg.startThread({
       name: makeThreadTitle(promptText),
       autoArchiveDuration: 1440,
     });
-    await respondInThread(thread, channel?.id ?? thread.parentId ?? thread.id, promptText);
+    await respondInThread(thread, channel?.id ?? thread.parentId ?? thread.id, promptText, { plan });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error("slash command 実行エラー:", err);

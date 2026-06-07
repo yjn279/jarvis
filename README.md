@@ -1,6 +1,6 @@
 # discord-claude-code
 
-ローカルの `claude` CLI を Discord から呼び出すスタンドアロン Bot。discord.js v14 が Gateway 接続し、メンションを受けるたびに `claude -p` をヘッドレス起動して返答する。アーキテクチャは nullevi03 同型（無限再起動ループ + 1メッセージ1プロセス）であり、Jarvis 秘書Bot とは独立した実装である。
+ローカルの `claude` を Discord から呼び出すスタンドアロン Bot。discord.js v14 が Gateway 接続し、メンションや slash command を受けるたびに `@anthropic-ai/claude-agent-sdk` の `query()` で 1 ターンを実行して返答する。許可・質問・プラン承認は Discord のネイティブ UI（ボタン／セレクト）で対話的に処理する。Jarvis 秘書Bot とは独立した実装である。
 
 ## Overview
 
@@ -8,15 +8,18 @@
 flowchart LR
   message[Discordメッセージ] --> router[ルーティング]
   router --> resolver[セッション解決]
-  resolver --> runner[claude起動]
-  runner --> reply[分割返信]
+  resolver --> runner[SDK実行]
+  runner --> control[対話UI]
+  control --> reply[分割返信]
 ```
 
 チャンネルでメンションすると新規スレッドが立ち、以降はそのスレッド内でメンション不要で会話を継続できる。Discord スレッドと Claude セッション（UUID）が 1:1 で対応し、 `data/sessions.json` に永続化される。
 
+実行中に許可を要するツール・`AskUserQuestion`・プラン承認が発生すると、Bot がスレッドへボタンやセレクトメニューを提示し、ユーザーの選択を Claude へ返す。これにより対話的な確認を Discord 上で完結できる（設計の詳細は [docs/interactive-ui.md](docs/interactive-ui.md)）。認証は端末にログイン済みの `claude` 資格情報をそのまま利用する（`ANTHROPIC_API_KEY` は不要）。
+
 スレッドをアーカイブ／削除すると、対応するセッションは閉じられ `sessions.json` から破棄される。閉じたスレッドでは以後（メンションが無い限り）応答しない。アーカイブ解除（新規メッセージ投稿）時は新規スレッド扱いとなり、メンションすれば直近履歴を文脈として引き継いで再開する。
 
-メンション起動に加えて Discord ネイティブ slash command `/claude <prompt>` でも起動できる。チャンネルで実行すると新規スレッドを生成し、スレッド内で実行するとそのスレッドを継続する。allowlist（`DISCORD_ALLOW_USER_IDS`）は slash command にも適用される。利用には招待時に `applications.commands` スコープが必要。
+メンション起動に加えて Discord ネイティブ slash command `/claude <prompt>` でも起動できる。チャンネルで実行すると新規スレッドを生成し、スレッド内で実行するとそのスレッドを継続する。`plan:true` を付けると計画モードで起動し、実行前に計画の承認を求める。allowlist（`DISCORD_ALLOW_USER_IDS`）は slash command にも適用される。利用には招待時に `applications.commands` スコープが必要。
 
 ## Environment Variables
 
@@ -28,15 +31,16 @@ flowchart LR
 | `DISCORD_ALLOW_USER_IDS` | no | `283813172639563779` | 応答を許可する Discord ユーザー ID（カンマ区切り）。空にすると全員許可（非推奨） |
 | `CHANNEL_CWD_MAP` | no | `{}` | チャンネル ID → 作業ディレクトリの JSON マップ（例: `{"1234":"~/projects/foo"}`）。値の先頭 `~` はホームに展開し、相対パスは絶対パスへ解決する。未登録チャンネルは `DEFAULT_WORKDIR` にフォールバック |
 | `DEFAULT_WORKDIR` | no | 実行ユーザーのホームディレクトリ | `CHANNEL_CWD_MAP` に載っていないチャンネルの既定 cwd（未設定時は `os.homedir()` を使用）。`~`・相対パスは展開・絶対パス化される（例: `~/projects`） |
-| `CLAUDE_PERMISSION_MODE` | no | `default` | `--permission-mode` に渡す値。 `default` / `acceptEdits` / `bypassPermissions` から選ぶ |
-| `CLAUDE_TIMEOUT_MS` | no | `1800000`（30分） | 1応答あたりのタイムアウト（ミリ秒）。`0` で無効。到達時は子プロセスツリーへ SIGTERM→猶予→SIGKILL の段階的終了 |
-| `REMOTE_CONTROL_ENABLED` | no | `true` | `true` のとき `--remote-control` を付与し、Claude デスクトップアプリでセッションを確認できる |
-| `CLAUDE_MODEL` | no | （claude 既定） | `--model` に渡すモデル識別子。空のとき claude 自身の既定モデルを使う |
+| `CLAUDE_PERMISSION_MODE` | no | `default` | パーミッションモード。`default` で対話的な許可確認が発火する。`acceptEdits` は編集を自動受理、`bypassPermissions` は全確認を省略（対話 UI を活かすには `default`） |
+| `CLAUDE_TIMEOUT_MS` | no | `1800000`（30分） | 1ターンあたりのタイムアウト（ミリ秒）。`0` で無効。許可・質問・プランの応答待ちも含むため十分長く取る。到達時は AbortController で query を中断 |
+| `INTERACTION_TIMEOUT_MS` | no | `300000`（5分） | 対話 UI（許可・質問・プラン承認）のボタン／セレクト応答待ちタイムアウト（ミリ秒）。`0` で無効（`CLAUDE_TIMEOUT_MS` に委ねる）。到達時は安全側＝拒否 |
+| `REMOTE_CONTROL_ENABLED` | no | `true` | `true` のとき新規セッションのタイトルに安定名 `dcc-…` を付与し、Claude アプリの履歴で識別可能にする（旧 `--remote-control` は廃止、後述） |
+| `CLAUDE_MODEL` | no | （claude 既定） | 使用するモデル識別子。空のとき claude 自身の既定モデルを使う |
 | `DATA_DIR` | no | `./data` | `sessions.json` を保存するディレクトリ。絶対パスを推奨 |
 
 ## Setup
 
-セットアップは以下の手順で行う。
+前提として、この端末で `claude` にログイン済みであること。SDK はその資格情報をそのまま利用するため、`ANTHROPIC_API_KEY` の設定は不要である（未ログインなら `claude` を一度起動してログインする）。セットアップは以下の手順で行う。
 
 1. 依存パッケージをインストールする。
 
@@ -92,16 +96,11 @@ screen -S discord -X quit
 kill <PID>
 ```
 
-## Remote Control Session
+## Session Identification
 
-`REMOTE_CONTROL_ENABLED=true`（既定）のとき、各スレッドの claude 起動には `--remote-control <name>` が付与される。セッション名は `dcc-<スレッド名スラッグ>-<スレッドID末尾8桁>` の形式になる。
+`REMOTE_CONTROL_ENABLED=true`（既定）のとき、新規セッションのタイトルに安定名 `dcc-<スレッド名スラッグ>-<スレッドID末尾8桁>` を付与する。Claude アプリのセッション履歴でこの名前を頼りに該当スレッドのセッションを特定できる。
 
-Claude デスクトップアプリでセッションを確認する手順は以下のとおり。
-
-1. Claude デスクトップアプリを起動する。
-2. サイドバーまたはメニューから **Remote Sessions** / **Agents** を開く。
-3. `dcc-` で始まるセッションが表示されれば接続されている。
-4. セッションを選択すると、Discord 上で進行中の会話を Claude アプリ側で参照できる。
+旧実装の `--remote-control` フラグは廃止した。このフラグは対話セッション専用で SDK の headless `query()` と非互換であり、かつ本来の用途（Claude アプリ側で許可・質問へ応答する）は Discord ネイティブの対話 UI（Issue #2）が直接満たすためである。`false` を設定するとタイトル付与も行わない。
 
 ## Security
 
@@ -116,7 +115,7 @@ claude はローカルのファイルシステムとシェルに対してプロ�
 
 ## Traceability
 
-8要件と実装チャンクの対応を以下に示す。セッション解決層（M2）が複数要件を一箇所で束ねている点が設計の核心である。
+要件と実装チャンクの対応を以下に示す。セッション解決層（M2）が複数要件を一箇所で束ねている点が設計の核心である。
 
 | 要件 | 内容 | 主担当 | 補強 |
 | :-- | :-- | :-- | :-- |
@@ -124,18 +123,19 @@ claude はローカルのファイルシステムとシェルに対してプロ�
 | 2 | メンションをスレッドで返信（新規スレッド生成） | M5 `src/index.ts` | M4 `src/discord.ts`（タイトル生成） |
 | 3 | スレッド内はメンション不要で継続 | M5 `src/index.ts` | M2 `src/sessions.ts`（既知スレッド判定） |
 | 4 | Discord スレッド ↔ Claude セッション 1:1 | M2 `src/sessions.ts` | M3 `src/claude.ts`（UUID 起動）, M5 |
-| 5 | チャンネル ↔ cwd 対応 | M1 `src/config.ts`（マップ）, M3 `src/claude.ts`（spawn cwd） | M2（cwd 永続） |
-| 6 | チャンネル topic をシステムプロンプト注入 | M4 `src/discord.ts`（topic 解決）, M3 `src/claude.ts`（注入） | M5 |
-| 7 | スラッシュコマンド透過 | M3 `src/claude.ts`（stdin 透過） | headless 制約あり（後述） |
-| 8 | `--remote-control` で Claude アプリから確認 | M3 `src/claude.ts`（付与）, M4 `src/discord.ts`（名前生成） | M6/M7（運用確認） |
+| 5 | チャンネル ↔ cwd 対応 | M1 `src/config.ts`（マップ）, M3 `src/claude.ts`（query cwd） | M2（cwd 永続） |
+| 6 | チャンネル topic をシステムプロンプト注入 | M4 `src/discord.ts`（topic 解決）, M3 `src/claude.ts`（append 注入） | M5 |
+| 7 | スラッシュコマンド透過 | M3 `src/claude.ts`（prompt 透過） | SDK query で処理 |
+| 8 | Claude アプリからセッション確認 | M3 `src/claude.ts`（タイトル付与）, M4 `src/discord.ts`（名前生成） | 対話 UI（#2）が応答用途を代替 |
+| #2 | 対話 UI（許可・質問・プラン承認） | `src/interactive.ts`（canUseTool ブリッジ） | M3 `src/claude.ts`（SDK 接続）, M5 |
 
 ## Constraints
 
 設計上の制約と拡張ポイントを以下に示す。
 
-- **headless スラッシュコマンド制約**: `-p` ヘッドレスモードでは claude 組み込みの `/help` 等が利用不可（"isn't available in this environment" を返す）。カスタムスラッシュコマンドやプロジェクトスラッシュは stdin 透過で動作する。全コマンドを有効にする場合は `--input-format stream-json` 常駐 PTY 方式への拡張が必要（Out of Scope）。
+- **対話 UI の範囲**: `AskUserQuestion` の選択肢は SDK が提示する `options` に限定し、自由記述（「その他」）は扱わない。ツール実行中の中間テキストはストリーミングせず最終結果のみ返信する。詳細と拡張余地は [docs/interactive-ui.md](docs/interactive-ui.md) を参照。
 - **コンテナ隔離**: 要件5の cwd 切替でサンドボックスを代替している。Docker 等によるプロセス隔離は実装していない。 `src/claude.ts` の cwd 解決を差し替えることで拡張できる。
-- **stream-json 常駐 / 対話 UI**: 現在の実装は1メッセージ1プロセス起動方式で、`AskUserQuestion` / プラン承認 / 許可プロンプトの Discord ネイティブ UI（Issue #2）は対象外。実機調査の結果、生 stream-json では許可が自動拒否され対話化できないため、常駐セッション方式への移行が必要となる。方針と選択肢（公式 Discord チャネルプラグインの採用を推奨）は [docs/interactive-ui.md](docs/interactive-ui.md) を参照。
+- **タイムアウト**: 1ターン全体は `CLAUDE_TIMEOUT_MS`、対話 UI の応答待ちは `INTERACTION_TIMEOUT_MS` で制限する。前者は許可待ち時間も含むため十分長く取る。
 
 ## Manual Smoke Test
 
@@ -146,4 +146,6 @@ claude はローカルのファイルシステムとシェルに対してプロ�
 3. 任意の Discord チャンネルで Bot をメンションする（例: `@BotName こんにちは`）。
 4. 新規スレッドが生成され、Bot から返信が届くことを確認する。
 5. そのスレッド内でメンションなしにメッセージを送り、継続して応答が返ることを確認する。
-6. Claude デスクトップアプリを開き、 `dcc-` で始まる remote-control セッションが見えることを確認する。
+6. ファイル作成など許可を要する依頼をして、許可ボタン（許可／常に許可／拒否）が提示され、選択どおりに動くことを確認する。
+7. `/claude plan:true <依頼>` で計画モードを起動し、計画本文と承認／却下ボタンが提示されることを確認する。
+8. Claude アプリのセッション履歴に `dcc-` で始まるタイトルのセッションが見えることを確認する。

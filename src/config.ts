@@ -59,12 +59,12 @@ function parseChannelCwdMap(raw: string | undefined): Record<string, string> {
   }
 }
 
-/** 1応答あたりのタイムアウト（ミリ秒）を env からパース。未設定は既定 30 分、0 で無効。 */
-function parseTimeoutMs(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return 30 * 60 * 1000;
+/** タイムアウト（ミリ秒）を env からパースする汎用関数。未設定は defaultMs、0 で無効。 */
+function parseTimeoutMs(raw: string | undefined, defaultMs: number, name: string): number {
+  if (raw === undefined || raw.trim() === "") return defaultMs;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
-    console.error(`✗ CLAUDE_TIMEOUT_MS は 0 以上の数値（ミリ秒）で指定してください: ${raw}`);
+    console.error(`✗ ${name} は 0 以上の数値（ミリ秒）で指定してください: ${raw}`);
     process.exit(1);
   }
   return n;
@@ -113,11 +113,18 @@ export const config = {
   permissionMode: process.env.CLAUDE_PERMISSION_MODE || "default",
 
   /**
-   * 1応答あたりのタイムアウト（ミリ秒）。0 で無効（タイムアウトしない）。
-   * 既定 30 分。エージェント型の長時間作業（複数ファイル編集・テスト/ビルド・Web 調査）を
-   * 途中で打ち切らないよう十分長く取る。到達時はまず SIGTERM、猶予後に SIGKILL。
+   * 1ターンあたりのタイムアウト（ミリ秒）。0 で無効（タイムアウトしない）。
+   * 既定 30 分。エージェント型の長時間作業（複数ファイル編集・テスト/ビルド・Web 調査）に加え、
+   * 対話的な許可・質問・プラン承認の応答待ちもこの時間に含まれるため十分長く取る。
+   * 到達時は AbortController で query 全体を中断する。
    */
-  claudeTimeoutMs: parseTimeoutMs(process.env.CLAUDE_TIMEOUT_MS),
+  claudeTimeoutMs: parseTimeoutMs(process.env.CLAUDE_TIMEOUT_MS, 30 * 60 * 1000, "CLAUDE_TIMEOUT_MS"),
+
+  /**
+   * 対話 UI（許可・質問・プラン承認）のボタン／セレクト応答待ちタイムアウト（ミリ秒）。
+   * 既定 5 分。0 で無効（claudeTimeoutMs の全体タイムアウトに委ねる）。到達時は安全側＝拒否。
+   */
+  interactionTimeoutMs: parseTimeoutMs(process.env.INTERACTION_TIMEOUT_MS, 5 * 60 * 1000, "INTERACTION_TIMEOUT_MS"),
 
   /**
    * `--remote-control` を有効にするか。
