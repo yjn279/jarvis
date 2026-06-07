@@ -120,7 +120,7 @@ export async function buildHistoryPreamble(
  * チャンネルの topic を返す。スレッドの場合は親チャンネル（`channel.parent`）を辿る。
  * topic が無ければ空文字を返す。discord.js v14 の型でナローイングし安全に参照する。
  */
-export function resolveTopic(channel: Channel): string {
+export function resolveTopic(channel: Channel | ThreadChannel): string {
   // スレッドチャンネルの場合は親を辿る。
   // discord.js の channel.isThread() を使う。自前の "parent" in channel 判定は
   // GuildChannel を継承する TextChannel/NewsChannel も true にしてしまい、初回ターンの

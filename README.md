@@ -16,6 +16,8 @@ flowchart LR
 
 スレッドをアーカイブ／削除すると、対応するセッションは閉じられ `sessions.json` から破棄される。閉じたスレッドでは以後（メンションが無い限り）応答しない。アーカイブ解除（新規メッセージ投稿）時は新規スレッド扱いとなり、メンションすれば直近履歴を文脈として引き継いで再開する。
 
+メンション起動に加えて Discord ネイティブ slash command `/claude <prompt>` でも起動できる。チャンネルで実行すると新規スレッドを生成し、スレッド内で実行するとそのスレッドを継続する。allowlist（`DISCORD_ALLOW_USER_IDS`）は slash command にも適用される。利用には招待時に `applications.commands` スコープが必要。
+
 ## Environment Variables
 
 `.env.example` をコピーして `.env` を作成し、以下の変数を設定する。
@@ -58,6 +60,7 @@ flowchart LR
 4. Bot を信頼するサーバーに招待する。必要な権限スコープは以下のとおり。
 
    - `bot` スコープ
+   - `applications.commands` スコープ（slash command `/claude` 用）
    - `Read Messages/View Channels`
    - `Send Messages`
    - `Create Public Threads`
