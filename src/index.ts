@@ -162,7 +162,8 @@ async function handleMessage(message: Message): Promise<void> {
     // スレッドなど）、過去ログを文脈として prompt に前置する（要件3 / #9）。
     let prompt = userText;
     if (inThread && !isKnownThread) {
-      const preamble = await buildHistoryPreamble(thread, message.id, botId);
+      // 履歴は allowlist 該当者＋Bot の発言のみに限定（cross-principal インジェクション防止）
+      const preamble = await buildHistoryPreamble(thread, message.id, config.allowUserIds, botId);
       if (preamble) prompt = preamble + userText;
     }
 

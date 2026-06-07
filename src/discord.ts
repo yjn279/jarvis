@@ -80,17 +80,27 @@ export function keepTyping(thread: ThreadChannel): { stop: () => void } {
 
 /**
  * セッション未登録のスレッドを引き継ぐとき、過去ログを文脈として組み立てる。
+ *
+ * 取り込む履歴は shouldHandle と同じアクセス方針に揃える: Bot 自身、または allowlist
+ * 該当ユーザーの発言のみを含める（allowlist が空＝全員許可のときは全員）。これにより、
+ * allowlist 外ユーザーの過去発言が claude への prompt に混入する cross-principal な
+ * プロンプトインジェクション／アクセス制御バイパスを防ぐ。
  */
 export async function buildHistoryPreamble(
   thread: ThreadChannel,
   beforeMessageId: string,
+  allowUserIds: readonly string[],
   botId?: string,
 ): Promise<string> {
   const fetched = await thread.messages.fetch({ limit: 50, before: beforeMessageId }).catch(() => null);
   if (!fetched || fetched.size === 0) return "";
 
+  const isAllowedAuthor = (authorId: string): boolean =>
+    authorId === botId || allowUserIds.length === 0 || allowUserIds.includes(authorId);
+
   const lines = [...fetched.values()]
     .reverse() // 古い順
+    .filter((m) => isAllowedAuthor(m.author.id))
     .map((m) => {
       const who = m.author.id === botId ? "Bot" : m.author.username;
       const text = stripMention(m.content, botId);
