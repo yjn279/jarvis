@@ -261,6 +261,7 @@ async function renderPlan(
   ctx: BridgeContext,
   input: Record<string, unknown>,
   opts: RenderOptions,
+  state: { acceptEdits: boolean },
 ): Promise<PermissionResult> {
   const plan = typeof input.plan === "string" ? input.plan : "";
   for (const chunk of splitText(`📋 **実行計画**\n\n${plan}`)) {
@@ -280,8 +281,10 @@ async function renderPlan(
   }
   if (i.customId === "approve") {
     await i.update({ content: "📋 ✅ 計画を承認しました。実行します。", components: [] }).catch(() => {});
-    // 承認後は編集を自動受理に切り替え、実行中の逐次プロンプトでスレッドを埋めない。
+    // 承認後は編集ツールをブリッジ側で自動許可し、実行中の逐次プロンプトでスレッドを埋めない。
+    // SDK の setMode(acceptEdits) は canUseTool を抑止しない（実機検証で確認）ため、state で代替する。
     // updatedInput を省くと許可応答スキーマが ZodError で弾くため、元の input を返す（renderPermission と同じ）。
+    state.acceptEdits = true;
     return {
       behavior: "allow",
       updatedInput: input,
@@ -296,16 +299,29 @@ async function renderPlan(
 // Bridge factory
 // ---------------------------------------------------------------------------
 
+/** 計画承認後に無確認で自動許可する編集ツール。Bash 等は対象外＝引き続き確認する。 */
+const EDIT_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+
 /**
  * スレッドに束ねた `canUseTool` ブリッジを生成する（#2 の中核）。
  * AskUserQuestion・ExitPlanMode・通常の許可をそれぞれの Discord UI へ振り分ける。
+ *
+ * 計画承認後は acceptEdits 相当に切り替える。SDK の setMode(acceptEdits) は canUseTool を
+ * 抑止しないため（実機検証で確認）、ブリッジ単位の state で編集ツールを無確認許可し、
+ * 実行中の逐次プロンプトでスレッドを埋めないようにする。state はスレッド（このブリッジ）に
+ * 閉じるため、別スレッドの承認状態と混ざらない。
  */
 export function makePermissionBridge(ctx: BridgeContext): CanUseTool {
+  const state = { acceptEdits: false };
   return async (toolName, input, options): Promise<PermissionResult> => {
     const render: RenderOptions = { signal: options.signal, suggestions: options.suggestions };
     try {
       if (toolName === "AskUserQuestion") return await renderQuestions(ctx, input, render);
-      if (toolName === "ExitPlanMode") return await renderPlan(ctx, input, render);
+      if (toolName === "ExitPlanMode") return await renderPlan(ctx, input, render, state);
+      // 計画承認後は編集ツールを無確認で自動許可する（Bash 等は引き続き確認）。
+      if (state.acceptEdits && EDIT_TOOLS.has(toolName)) {
+        return { behavior: "allow", updatedInput: input };
+      }
       return await renderPermission(ctx, toolName, input, render);
     } catch (err) {
       // UI 描画・待受の想定外失敗は安全側（拒否）に倒す。

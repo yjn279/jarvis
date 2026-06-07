@@ -20,6 +20,7 @@ SDK 方式はこの構造を置き換える。各ターンを `query()` で実�
 | cwd | `Options.cwd` は spawn される claude のプロセス cwd を正しく設定する（`pwd` で検証）。ツールの相対パスはこの cwd 基準で解決される（要件5） |
 | `AskUserQuestion` | `canUseTool` に `{questions:[{question, header, options, multiSelect}]}` が渡る。`{behavior:"allow", updatedInput:{questions, answers}}` で回答を返すとモデルが受領し継続する |
 | `ExitPlanMode` | `canUseTool` の `input.plan` に計画本文（Markdown）が入る。`deny` で計画モードを継続、`allow`（＋`updatedInput`）で承認となる |
+| `setMode` | `updatedPermissions` の `setMode(acceptEdits)` は `canUseTool` を抑止しない。`canUseTool` を渡している間は全ツールで発火し続けるため、承認後の編集自動受理はブリッジ側の状態で代替する（実機の Discord 検証で確認） |
 
 ## Architecture
 
@@ -52,7 +53,7 @@ flowchart LR
 
 いずれの許可結果も `updatedInput` を伴う点が要諦である。Verification 節のとおり、これを省くと SDK が許可応答を `ZodError` で拒否しツールが実行されないため、各レンダラは元の input（質問フローでは回答を加えた input）を必ず返す。
 
-「常に許可」は `canUseTool` が渡す `suggestions` を `updatedPermissions` として返し、同一セッション内で同じツールを再確認しない。プラン承認時は `setMode` で `acceptEdits` へ切り替え、実行中の逐次プロンプトでスレッドを埋めないようにする。
+「常に許可」は `canUseTool` が渡す `suggestions` を `updatedPermissions` として返し、同一セッション内で同じツールを再確認しない。プラン承認後はブリッジ単位の状態を `acceptEdits` に切り替え、編集ツール（Write・Edit・MultiEdit・NotebookEdit）を無確認で自動許可して実行中の逐次プロンプトでスレッドを埋めない。`setMode(acceptEdits)` 単体では `canUseTool` を抑止できない（Verification 節）ため、この自動許可はブリッジ側で担う。Bash 等の非編集ツールは承認後も確認を継続する。状態はスレッド（ブリッジ）に閉じ、別スレッドへ波及しない。
 
 計画モードへの遷移は slash command `/claude` の `plan` オプション（`plan:true`）で行う。指定したターンを `permissionMode: "plan"` で起動し、モデルが `ExitPlanMode` を呼んだ時点で承認 UI を提示する。
 
