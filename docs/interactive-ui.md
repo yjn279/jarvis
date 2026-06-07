@@ -16,8 +16,10 @@ SDK 方式はこの構造を置き換える。各ターンを `query()` で実�
 | :-- | :-- |
 | 認証 | 端末にログイン済みの `claude` 資格情報をそのまま利用する（`apiKeySource: none` でも応答）。`ANTHROPIC_API_KEY` は不要 |
 | 許可プロンプト | `canUseTool` が全ツール実行前に発火する。`title` は headless では未設定のため本文は自前生成が必要 |
+| 許可応答の形 | `behavior:"allow"` は `updatedInput` を必須とする。元の input をそのまま返してよいが、省くと SDK が `ZodError`（Invalid input）で弾き、ツールが実行されない（許可したのに何も起きない）。`deny` は `message` のみ |
+| cwd | `Options.cwd` は spawn される claude のプロセス cwd を正しく設定する（`pwd` で検証）。ツールの相対パスはこの cwd 基準で解決される（要件5） |
 | `AskUserQuestion` | `canUseTool` に `{questions:[{question, header, options, multiSelect}]}` が渡る。`{behavior:"allow", updatedInput:{questions, answers}}` で回答を返すとモデルが受領し継続する |
-| `ExitPlanMode` | `canUseTool` の `input.plan` に計画本文（Markdown）が入る。`deny` で計画モードを継続、`allow` で承認となる |
+| `ExitPlanMode` | `canUseTool` の `input.plan` に計画本文（Markdown）が入る。`deny` で計画モードを継続、`allow`（＋`updatedInput`）で承認となる |
 
 ## Architecture
 
@@ -44,9 +46,11 @@ flowchart LR
 
 | フロー | トリガ | UI | 戻り値 |
 | :-- | :-- | :-- | :-- |
-| 許可 | 任意のツール実行 | ボタン（許可／常に許可／拒否） | allow ／ allow＋updatedPermissions ／ deny |
+| 許可 | 任意のツール実行 | ボタン（許可／常に許可／拒否） | allow＋updatedInput ／ allow＋updatedInput＋updatedPermissions ／ deny |
 | 質問 | `AskUserQuestion` | 質問ごとのセレクトメニュー | allow＋updatedInput.answers |
-| プラン承認 | `ExitPlanMode` | 計画本文＋ボタン（承認／却下） | allow＋setMode(acceptEdits) ／ deny |
+| プラン承認 | `ExitPlanMode` | 計画本文＋ボタン（承認／却下） | allow＋updatedInput＋setMode(acceptEdits) ／ deny |
+
+いずれの許可結果も `updatedInput` を伴う点が要諦である。Verification 節のとおり、これを省くと SDK が許可応答を `ZodError` で拒否しツールが実行されないため、各レンダラは元の input（質問フローでは回答を加えた input）を必ず返す。
 
 「常に許可」は `canUseTool` が渡す `suggestions` を `updatedPermissions` として返し、同一セッション内で同じツールを再確認しない。プラン承認時は `setMode` で `acceptEdits` へ切り替え、実行中の逐次プロンプトでスレッドを埋めないようにする。
 

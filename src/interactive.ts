@@ -173,9 +173,14 @@ async function renderPermission(
   const label = i.customId === "deny" ? "⛔ 拒否" : i.customId === "always" ? "✅ 常に許可" : "✅ 許可";
   await i.update({ content: `🔐 ${desc}\n\n${label}`, components: [] }).catch(() => {});
 
+  // 許可結果には必ず updatedInput を含める。これを省くと SDK の許可応答スキーマが
+  // ZodError（Invalid input）で弾き、ツールが実行されず「許可したのに何も起きない」
+  // 状態になる（実機検証で確認）。元の input をそのまま返す。
   if (i.customId === "deny") return { behavior: "deny", message: "ユーザーが拒否しました。" };
-  if (i.customId === "always") return { behavior: "allow", updatedPermissions: opts.suggestions ?? [] };
-  return { behavior: "allow" };
+  if (i.customId === "always") {
+    return { behavior: "allow", updatedInput: input, updatedPermissions: opts.suggestions ?? [] };
+  }
+  return { behavior: "allow", updatedInput: input };
 }
 
 /** AskUserQuestion を1メッセージ複数セレクトメニューで描画し、回答を answers として返す。 */
@@ -276,7 +281,12 @@ async function renderPlan(
   if (i.customId === "approve") {
     await i.update({ content: "📋 ✅ 計画を承認しました。実行します。", components: [] }).catch(() => {});
     // 承認後は編集を自動受理に切り替え、実行中の逐次プロンプトでスレッドを埋めない。
-    return { behavior: "allow", updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }] };
+    // updatedInput を省くと許可応答スキーマが ZodError で弾くため、元の input を返す（renderPermission と同じ）。
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
+    };
   }
   await i.update({ content: "📋 ✏️ 計画を却下しました。修正します。", components: [] }).catch(() => {});
   return { behavior: "deny", message: "ユーザーは計画を承認しませんでした。フィードバックを踏まえて計画を見直してください。" };
