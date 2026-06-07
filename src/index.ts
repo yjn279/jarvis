@@ -156,29 +156,19 @@ async function handleMessage(message: Message): Promise<void> {
   let thread: ThreadChannel | undefined;
 
   try {
-    if (inThread) {
-      thread = channel as ThreadChannel;
-    } else {
-      try {
-        thread = await message.startThread({
+    thread = inThread
+      ? (channel as ThreadChannel)
+      : await message.startThread({
           name: makeThreadTitle(userText),
           autoArchiveDuration: 1440,
         });
-      } catch (startErr) {
-        // Discord エラー 160004: このメッセージには既にスレッドが存在する。
-        // 二重起動・競合・UI 先行作成などで発生するため、既存スレッドへフォールバック。
-        if (!(startErr instanceof Error && startErr.message.includes("thread has already been created"))) {
-          throw startErr;
-        }
-        thread =
-          (message.thread as ThreadChannel | null) ??
-          (message.guild?.channels.cache.get(message.id) as ThreadChannel | undefined);
-        if (!thread) throw startErr;
-      }
 
-      // チャンネルからスレッドを新規または既存で取得した場合、ユーザーをメンバーに追加する。
-      // これをしないとユーザーの Discord クライアントがスレッドを購読せず、
-      // typing・新着返信が gateway でライブ配信されない。
+    // 新規スレッドにトリガー元ユーザーを参加させる。これをしないとユーザーの Discord
+    // クライアントがそのスレッドを購読せず、typing（TYPING_START）も新着返信
+    // （MESSAGE_CREATE）も gateway でライブ配信されない。結果、手動でスレッドを開き直す
+    // まで「入力中…」が出ず、返信が届いてもUIが変化しない症状になる。メンバー追加で
+    // 購読・通知・サイドバー表示が有効になり、両者がリアルタイムに反映される。
+    if (!inThread) {
       await thread.members.add(message.author.id).catch(() => {});
     }
 
