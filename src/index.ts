@@ -154,6 +154,15 @@ async function handleMessage(message: Message): Promise<void> {
           autoArchiveDuration: 1440,
         });
 
+    // 新規スレッドにトリガー元ユーザーを参加させる。これをしないとユーザーの Discord
+    // クライアントがそのスレッドを購読せず、typing（TYPING_START）も新着返信
+    // （MESSAGE_CREATE）も gateway でライブ配信されない。結果、手動でスレッドを開き直す
+    // まで「入力中…」が出ず、返信が届いてもUIが変化しない症状になる。メンバー追加で
+    // 購読・通知・サイドバー表示が有効になり、両者がリアルタイムに反映される。
+    if (!inThread) {
+      await thread.members.add(message.author.id).catch(() => {});
+    }
+
     await message.react("👀").catch(() => {});
 
     const parentChannelId = inThread

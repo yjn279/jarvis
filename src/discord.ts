@@ -72,7 +72,11 @@ export async function sendChunked(thread: ThreadChannel, text: string): Promise<
 
 /** 応答を作っている間「入力中…」を出し続ける。返り値の stop() で止める。 */
 export function keepTyping(thread: ThreadChannel): { stop: () => void } {
-  const tick = () => thread.sendTyping().catch(() => {});
+  // 失敗は致命的でないが、無音だと typing 不表示の原因切り分けができないため記録する。
+  const tick = () =>
+    thread.sendTyping().catch((err: unknown) => {
+      console.error("typing 送信に失敗:", err instanceof Error ? err.message : err);
+    });
   tick();
   const timer = setInterval(tick, 8000); // Discord の typing は約10秒で消える
   return { stop: () => clearInterval(timer) };
